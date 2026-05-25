@@ -1,0 +1,23 @@
+[Unit]
+Description=StoryMaker - Generador de historias educativas
+After=network.target multi-user.target storymaker-wifi.service
+
+[Service]
+Type=simple
+User=storymaker
+Group=storymaker
+WorkingDirectory=/home/storymaker/proyecto
+Environment="PATH=/home/storymaker/proyecto/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="PYTHONPATH=/home/storymaker/proyecto"
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/home/storymaker/proyecto/venv/bin/python3 /home/storymaker/proyecto/main.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+KillMode=mixed
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=storymaker
+
+[Install]
+WantedBy=multi-user.target

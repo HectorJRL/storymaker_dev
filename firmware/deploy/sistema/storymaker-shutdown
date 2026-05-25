@@ -1,0 +1,2 @@
+storymaker ALL=(ALL) NOPASSWD: /usr/sbin/shutdown
+storymaker ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart historias.service

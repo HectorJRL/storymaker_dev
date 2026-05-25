@@ -1,0 +1,41 @@
+{
+    "perfil_activo": "1eso",
+    "pin": "1234",
+    "mensaje_bienvenida": "Lista para generar historias.",
+    "mensaje_sin_frases": "Se han agotado las combinaciones. Reinicia el dispositivo.",
+    "hardware": {
+        "eink": {
+            "activada": false,
+            "modelo": "epd_4in2",
+            "spi_bus": 0,
+            "spi_device": 0,
+            "pines": {
+                "dc": 25,
+                "rst": 17,
+                "busy": 24
+            }
+        },
+        "impresora": {
+            "activada": true,
+            "puerto": "/dev/serial0",
+            "baudrate": 9600
+        },
+        "audio": {
+            "activada": false,
+            "motor": "edge-tts",
+            "voz": "es-ES-ElviraNeural",
+            "volumen": 55
+        }
+    },
+    "boton": {
+        "pin_gpio": 5,
+        "tiempo_pulsacion_larga": 2
+    },
+    "led": {
+        "pin_gpio": 23
+    },
+    "portal": {
+        "puerto": 5000
+    },
+    "setup_completado": true
+}

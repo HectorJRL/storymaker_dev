@@ -7,9 +7,6 @@ venv/
 # Logs
 *.log
 
-# Config con datos locales (subimos solo el ejemplo)
-firmware/config.json
-
 # Sistema
 .DS_Store
 Thumbs.db
