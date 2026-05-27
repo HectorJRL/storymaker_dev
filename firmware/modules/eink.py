@@ -465,7 +465,7 @@ class PantallaEInk:
             url        = f"http://{ip}:5000"
             instruccion = "Bienvenido. Escanea el QR para abrir el portal."
         elif modo == 'ap':
-            url        = "http://10.42.0.1:5000"
+            url        = "http://10.42.0.1:8080"
             instruccion = "Escanea el QR para configurar el WiFi."
         else:
             url        = None

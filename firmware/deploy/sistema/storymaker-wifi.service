@@ -1,0 +1,13 @@
+[Unit]
+Description=StoryMaker — Gestión WiFi (cliente o AP)
+After=NetworkManager.service
+Wants=NetworkManager.service
+Before=historias.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/storymaker-wifi.sh
+
+[Install]
+WantedBy=multi-user.target

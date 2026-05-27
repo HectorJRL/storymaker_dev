@@ -161,7 +161,7 @@ class Impresora:
                 self._feed(1)
                 self._linea_centrada(url)
             elif modo == 'ap':
-                url = "http://10.42.0.1:5000"
+                url = "http://10.42.0.1:8080"
                 self._feed(1)
                 self._linea_centrada("Escanea el QR para")
                 self._linea_centrada("configurar el WiFi:")

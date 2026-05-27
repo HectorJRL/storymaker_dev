@@ -1,0 +1,19 @@
+[Unit]
+Description=StoryMaker — Portal cautivo WiFi (puerto 8080)
+After=NetworkManager.service storymaker-wifi.service
+Wants=NetworkManager.service
+
+[Service]
+Type=simple
+# Necesita nmcli para añadir/activar conexiones → corre como root
+# (alternativa: añadir usuario storymaker al grupo netdev + polkit)
+User=root
+ExecStart=/usr/bin/python3 /usr/local/bin/storymaker-captive.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=storymaker-captive
+
+[Install]
+WantedBy=multi-user.target
