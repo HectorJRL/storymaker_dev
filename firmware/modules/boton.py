@@ -80,7 +80,13 @@ class Boton:
         print(f"[Boton] Armado: GPIO{self.pin_boton} + LED GPIO{config_led.get('pin_gpio', 23)}")
 
     def _poll_loop(self):
-        estado_anterior = False
+        # Inicializar con el estado REAL del botón al arrancar: si ya está
+        # pulsado (ej. usuario encendiendo con el dedo en el botón), no se
+        # detecta como transición y no se dispara un shutdown inesperado.
+        if GPIO_DISPONIBLE:
+            estado_anterior = (GPIO.input(self.pin_boton) == self.pressed_state)
+        else:
+            estado_anterior = False
         lecturas_consistentes = 0
 
         while not self._parar:
