@@ -6,3 +6,4 @@
 sas largas: el texto se sale de la pantalla y queda cortado. Revisar el cálcu
 lo de tamaño de fuente dinámico o el wrap de texto en `eink.py` / `modules/ei
 nk.py`.
+- Añadir audio de bienvenida y despedida.
