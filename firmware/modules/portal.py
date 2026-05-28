@@ -11,6 +11,7 @@ Rutas:
 Se lanza en un hilo separado (daemon) para no bloquear main.py.
 """
 import os
+import secrets
 import tempfile
 import threading
 from functools import wraps
@@ -22,7 +23,8 @@ PERFILES_DIR = os.path.join(BASE_DIR, 'data', 'perfiles')
 PIN_DEFAULT  = "1234"
 
 app = Flask(__name__)
-app.secret_key = "storymaker-secret-2025"
+# Secret temporal hasta que Portal.__init__ cargue el valor persistente de config.json
+app.secret_key = secrets.token_hex(32)
 
 # Callback de generación registrado desde main.py
 _callback_generar = None
@@ -191,6 +193,8 @@ def anadir_premisa():
         return jsonify({'ok': False, 'error': 'Datos incompletos'})
     if tipo not in ['detonantes', 'protagonistas', 'conflictos']:
         return jsonify({'ok': False, 'error': 'Tipo no válido'})
+    if perfil not in get_perfiles():
+        return jsonify({'ok': False, 'error': 'Perfil no encontrado'})
     premisas = get_premisas(perfil, tipo)
     if texto in premisas:
         return jsonify({'ok': False, 'error': 'Esa premisa ya existe'})
@@ -207,6 +211,10 @@ def borrar_premisa():
     indice = data.get('indice')
     if perfil is None or tipo is None or indice is None:
         return jsonify({'ok': False, 'error': 'Datos incompletos'})
+    if tipo not in ['detonantes', 'protagonistas', 'conflictos']:
+        return jsonify({'ok': False, 'error': 'Tipo no válido'})
+    if perfil not in get_perfiles():
+        return jsonify({'ok': False, 'error': 'Perfil no encontrado'})
     premisas = get_premisas(perfil, tipo)
     if indice < 0 or indice >= len(premisas):
         return jsonify({'ok': False, 'error': 'Índice fuera de rango'})
@@ -277,6 +285,10 @@ def nuevo_perfil():
     if not nombre:
         return jsonify({'ok': False, 'error': 'Nombre vacío'})
     ruta = os.path.abspath(os.path.join(PERFILES_DIR, nombre))
+    # Guard de path traversal: la ruta resuelta debe estar dentro de PERFILES_DIR
+    perfiles_abs = os.path.abspath(PERFILES_DIR)
+    if not ruta.startswith(perfiles_abs + os.sep):
+        return jsonify({'ok': False, 'error': 'Nombre de perfil no válido'})
     if os.path.exists(ruta):
         return jsonify({'ok': False, 'error': 'Ya existe ese perfil'})
     os.makedirs(ruta)
@@ -564,7 +576,7 @@ body { display: flex; align-items: flex-start; justify-content: center; padding:
       <input class="sub-input" type="password" id="nuevo_pin" name="nuevo_pin"
              maxlength="8" placeholder="Dejar vacío para no cambiar"
              inputmode="numeric" style="max-width:200px">
-      <p class="nota">4–8 dígitos. PIN actual: {config.get('pin', PIN_DEFAULT)}</p>
+      <p class="nota">4–8 dígitos. Dejar vacío para no cambiar.</p>
     </div>
 
     <button class="submit-btn" type="submit">{btn_label}</button>
@@ -1066,6 +1078,18 @@ async function cambiarPerfil(p) {{
 class Portal:
     def __init__(self, config):
         self.puerto = config.get('portal', {}).get('puerto', 5000)
+
+        # Secret persistente por dispositivo: se genera una vez y se guarda en config.json.
+        # Así cada Pi tiene su propia clave de sesión y no se puede falsificar una cookie
+        # de un dispositivo para usarla en otro.
+        secret = config.get('flask_secret')
+        if not secret:
+            secret = secrets.token_hex(32)
+            config['flask_secret'] = secret
+            guardar_config(config)
+            print("[Portal] Clave de sesión generada y guardada en config.json")
+        app.secret_key = secret
+
         self._hilo  = None
 
     def iniciar(self):

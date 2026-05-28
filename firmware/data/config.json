@@ -37,5 +37,5 @@
     "portal": {
         "puerto": 5000
     },
-    "setup_completado": true
+    "setup_completado": false
 }
