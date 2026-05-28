@@ -14,6 +14,7 @@ import os
 import sys
 import time
 import signal
+import subprocess
 import traceback
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -147,7 +148,13 @@ def main():
                 config_nueva = cargar_config()
                 if config_nueva.get('setup_completado', False):
                     print("[Main] Setup completado. Reiniciando servicio...")
-                    os.execv(sys.executable, [sys.executable] + sys.argv)
+                    # Usar systemctl en lugar de os.execv: evita que el FD del
+                    # socket Flask quede heredado y cause conflicto de puerto.
+                    subprocess.Popen(
+                        ['sudo', 'systemctl', 'restart', 'historias.service'],
+                        start_new_session=True
+                    )
+                    sys.exit(0)
             except Exception:
                 pass
 

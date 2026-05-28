@@ -60,10 +60,11 @@ class Audio:
         mp3_path = tmp.name
         try:
             comunicar = edge_tts.Communicate(texto, self.voz)
-            await comunicar.save(mp3_path)
+            await asyncio.wait_for(comunicar.save(mp3_path), timeout=15.0)
             subprocess.run(
                 [MPG123_BIN, '-a', APLAY_DEVICE, '-f', str(int(self.volumen / 100 * 32768)), mp3_path],
                 capture_output=True,
+                check=True,
                 timeout=60
             )
             print("[Audio] Reproduccion completada.")

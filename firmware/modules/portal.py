@@ -11,6 +11,7 @@ Rutas:
 Se lanza en un hilo separado (daemon) para no bloquear main.py.
 """
 import os
+import tempfile
 import threading
 from functools import wraps
 from flask import Flask, request, session, redirect, url_for, jsonify
@@ -36,6 +37,12 @@ def registrar_callback_despedida(cb):
     global _callback_despedida
     _callback_despedida = cb
 
+_callback_cambiar_perfil = None
+
+def registrar_callback_cambiar_perfil(cb):
+    global _callback_cambiar_perfil
+    _callback_cambiar_perfil = cb
+
 # ------------------------------------------------------------------ #
 # Helpers                                                             #
 # ------------------------------------------------------------------ #
@@ -53,9 +60,21 @@ def get_premisas(perfil, tipo):
         return [l.strip() for l in f if l.strip()]
 
 def guardar_premisas(perfil, tipo, premisas):
+    """Escritura atómica: escribe en temporal y renombra.
+    Evita corrupción si la SD se llena o el sistema pierde alimentación a mitad."""
     ruta = os.path.abspath(os.path.join(PERFILES_DIR, perfil, f"{tipo}.txt"))
-    with open(ruta, 'w', encoding='utf-8') as f:
-        f.write('\n'.join(premisas))
+    directorio = os.path.dirname(ruta)
+    fd, tmp = tempfile.mkstemp(dir=directorio, suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(premisas))
+        os.replace(tmp, ruta)       # atómico en Linux
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 def login_requerido(f):
     @wraps(f)
@@ -205,6 +224,9 @@ def cambiar_perfil():
     config = cargar_config()
     config['perfil_activo'] = perfil
     guardar_config(config)
+    if _callback_cambiar_perfil:
+        threading.Thread(target=_callback_cambiar_perfil,
+                         args=(perfil,), daemon=True).start()
     return jsonify({'ok': True})
 
 @app.route('/api/guardar_hardware', methods=['POST'])
