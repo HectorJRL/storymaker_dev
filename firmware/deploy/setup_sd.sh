@@ -195,12 +195,27 @@ ssh "$PI" bash <<'REMOTE'
 set -euo pipefail
 
 sudo tee /etc/asound.conf > /dev/null <<'ASOUND'
-# StoryMaker — MAX98357A I2S via hifiberry-dac (siempre card 0 en Pi Zero 2W)
-# Permite usar el device "plug:dmixed" en mpg123
+# StoryMaker — MAX98357A I2S via hifiberry-dac (Pi Zero 2W, card 0)
+# type dmix: mixer por software que permite streams simultáneos.
+# Necesario para que el hilo keep-alive (aplay /dev/zero) y mpg123
+# usen el dispositivo al mismo tiempo sin conflicto, eliminando el
+# chasquido del MAX98357A en cada premisa.
 pcm.dmixed {
-    type hw
-    card 0
-    device 0
+    type dmix
+    ipc_key 1024
+    ipc_key_add_uid true
+    slave {
+        pcm "hw:0,0"
+        rate 44100
+        format S16_LE
+        period_time 0
+        period_size 1024
+        buffer_size 8192
+    }
+    bindings {
+        0 0
+        1 1
+    }
 }
 ctl.dmixed {
     type hw

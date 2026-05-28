@@ -12,9 +12,12 @@ import tempfile
 import os
 import shutil
 import asyncio
+import threading
+import time
 
 VOZ_DEFAULT  = "es-ES-ElviraNeural"
 MPG123_BIN   = "mpg123"
+APLAY_BIN    = "aplay"
 APLAY_DEVICE = "plug:dmixed"
 EDGE_TTS_BIN = "/home/storymaker/proyecto/venv/bin/edge-tts"
 
@@ -24,15 +27,43 @@ class Audio:
         self.voz      = config.get('voz', VOZ_DEFAULT)
         self.volumen  = config.get('volumen', 90)
         self._mpg123_ok = shutil.which(MPG123_BIN) is not None
+        self._aplay_ok  = shutil.which(APLAY_BIN)  is not None
         self._espeak_ok = shutil.which('espeak-ng') is not None or shutil.which('espeak') is not None
         self._edge_ok   = os.path.isfile(EDGE_TTS_BIN)
         if self.activada:
             if self._edge_ok and self._mpg123_ok:
                 print(f"[Audio] edge-tts listo. Voz: {self.voz}")
+                if self._aplay_ok:
+                    self._iniciar_keepalive()
             elif self._espeak_ok:
                 print("[Audio] Sin red o edge-tts no disponible, usando espeak como fallback.")
             else:
                 print("[Audio] AVISO: ningun motor TTS disponible.")
+
+    def _iniciar_keepalive(self):
+        """Mantiene el reloj I2S corriendo con silencio continuo.
+
+        El MAX98357A entra en shutdown en cuanto BCLK se detiene (fin de
+        mpg123). Al reactivarse produce un chasquido audible. Alimentar el
+        dispositivo con /dev/zero (muestras nulas = silencio digital) mantiene
+        el reloj I2S vivo indefinidamente.
+
+        Requiere que pcm.dmixed sea 'type dmix' en /etc/asound.conf, para
+        que aplay y mpg123 puedan usar el dispositivo simultáneamente.
+        """
+        def _loop():
+            while True:
+                try:
+                    subprocess.run(
+                        [APLAY_BIN, '-D', APLAY_DEVICE,
+                         '-f', 'S16_LE', '-r', '44100', '-c', '2',
+                         '/dev/zero'],
+                        capture_output=True   # sin timeout: corre indefinidamente
+                    )
+                except Exception:
+                    time.sleep(2)             # pausa breve si falla, luego reintenta
+        threading.Thread(target=_loop, daemon=True).start()
+        print("[Audio] Keep-alive MAX98357A activo — chasquido de arranque eliminado.")
 
     def hablar(self, texto: str):
         if not self.activada:
