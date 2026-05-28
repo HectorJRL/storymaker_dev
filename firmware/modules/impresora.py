@@ -100,7 +100,11 @@ class Impresora:
     # API pública                                                          #
     # ------------------------------------------------------------------ #
     def imprimir(self, texto: str):
-        """Imprime premisa con margen de 2 saltos arriba y abajo."""
+        """Imprime una premisa narrativa alineada a la izquierda con ajuste
+        automático de línea (textwrap). Usa 4 saltos al final para que la
+        última línea salga completamente de la cabeza de impresión antes de
+        arrancar el papel (la QR701 tiene ~30 mm de distancia cabeza-borde).
+        Llamado desde salidas.py para todas las premisas."""
         if not SERIAL_DISPONIBLE:
             print(f"[Impresora] Simulación: {texto}")
             return
@@ -113,22 +117,25 @@ class Impresora:
             self._feed(2)
             self._escribir(ALIGN_LEFT)
             self._escribir(ajustado.encode('ascii', errors='replace'))
-            self._feed(2)
+            self._feed(4)           # 4 saltos: evita que el texto quede dentro de la carcasa
             time.sleep(0.5)
             print("[Impresora] Texto enviado.")
         except Exception as e:
             print(f"[Impresora] ERROR al imprimir: {e}")
 
     def imprimir_centrado(self, texto: str):
+        """Imprime una sola línea centrada, sin ajuste de línea automático.
+        Pensado para mensajes cortos de sistema (máx. 32 caracteres).
+        No se usa actualmente desde salidas.py; disponible para uso futuro."""
         if not SERIAL_DISPONIBLE:
             print(f"[Impresora] Simulación centrado: {texto}")
             return
         if not self.conexion or not self.conexion.is_open:
             return
         try:
-            self._feed(2)
+            self._feed(1)
             self._linea_centrada(texto)
-            self._feed(2)
+            self._feed(3)
             time.sleep(0.5)
         except Exception as e:
             print(f"[Impresora] ERROR: {e}")
