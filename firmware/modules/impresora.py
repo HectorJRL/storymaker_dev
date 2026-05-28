@@ -117,7 +117,7 @@ class Impresora:
             self._feed(2)
             self._escribir(ALIGN_LEFT)
             self._escribir(ajustado.encode('ascii', errors='replace'))
-            self._feed(4)           # 4 saltos: evita que el texto quede dentro de la carcasa
+            self._feed(6)           # 6 saltos: asegura que el texto salga completamente de la carcasa
             time.sleep(0.5)
             print("[Impresora] Texto enviado.")
         except Exception as e:
