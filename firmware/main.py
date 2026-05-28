@@ -92,6 +92,18 @@ def al_pulsar_largo():
         boton.shutdown_seguro()
 
 
+def al_cambiar_perfil(nuevo_perfil):
+    """Recarga el generador cuando el portal cambia el perfil activo."""
+    global generador
+    ruta_perfil = os.path.join(PROJECT_DIR, 'data', 'perfiles', nuevo_perfil)
+    try:
+        nuevo_generador = Generador(ruta_perfil)
+        generador = nuevo_generador
+        print(f"[Main] Perfil cambiado a '{nuevo_perfil}' — generador recargado.")
+    except (FileNotFoundError, ValueError) as e:
+        print(f"[Main] ERROR al cargar perfil '{nuevo_perfil}': {e}")
+
+
 def cleanup(*args):
     print("[Main] Limpieza y salida.")
     if router:
@@ -143,7 +155,7 @@ def main():
     ruta_perfil = os.path.join(PROJECT_DIR, 'data', 'perfiles', config['perfil_activo'])
     try:
         generador = Generador(ruta_perfil)
-    except FileNotFoundError as e:
+    except (FileNotFoundError, ValueError) as e:
         print(f"[Main] ERROR CRÍTICO: {e}")
         sys.exit(1)
 
@@ -157,10 +169,13 @@ def main():
     boton.on_corto(al_pulsar_corto)
     boton.on_largo(al_pulsar_largo)
 
-    # Registrar callback de generación en el portal (botón virtual web)
-    from modules.portal import registrar_callback_generar, registrar_callback_despedida
+    # Registrar callbacks en el portal (botón virtual web + cambio de perfil)
+    from modules.portal import (registrar_callback_generar,
+                                 registrar_callback_despedida,
+                                 registrar_callback_cambiar_perfil)
     registrar_callback_generar(al_pulsar_corto)
     registrar_callback_despedida(router.mostrar_despedida)
+    registrar_callback_cambiar_perfil(al_cambiar_perfil)
 
     # LED encendido fijo = sistema listo para generar premisas
     boton.led.on()

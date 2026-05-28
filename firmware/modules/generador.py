@@ -36,6 +36,10 @@ class Generador:
             raise FileNotFoundError(f"No se encontró: {ruta}")
         with open(ruta, 'r', encoding='utf-8') as f:
             lineas = [l.strip().rstrip('.,;: ') for l in f if l.strip()]
+        if not lineas:
+            raise ValueError(
+                f"El archivo '{nombre_archivo}' está vacío o solo contiene "
+                "líneas en blanco. Añade al menos una entrada.")
         return lineas
 
     def hay_frases_disponibles(self):
