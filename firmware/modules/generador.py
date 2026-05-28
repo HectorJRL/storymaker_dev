@@ -9,6 +9,7 @@ hasta el próximo arranque.
 
 import os
 import random
+import threading
 
 
 class Generador:
@@ -21,6 +22,10 @@ class Generador:
         random.shuffle(self.detonantes)
         random.shuffle(self.protagonistas)
         random.shuffle(self.conflictos)
+
+        # Lock para atomizar la comprobación + extracción de frases:
+        # evita IndexError si botón físico y portal web coinciden en el tiempo.
+        self._lock = threading.Lock()
 
         print(f"[Generador] Sesión iniciada: {len(self.detonantes)} detonantes, "
               f"{len(self.protagonistas)} protagonistas, {len(self.conflictos)} conflictos.")
@@ -42,12 +47,16 @@ class Generador:
         return min(len(self.detonantes), len(self.protagonistas), len(self.conflictos))
 
     def generar_frase(self):
-        if not self.hay_frases_disponibles():
-            return None
-        d = self.detonantes.pop()
-        p = self.protagonistas.pop()
-        c = self.conflictos.pop()
+        """Extrae una frase de forma atómica. Devuelve None si no quedan frases
+        (incluido el caso en que otro hilo consumió la última simultáneamente)."""
+        with self._lock:
+            if not self.hay_frases_disponibles():
+                return None
+            d = self.detonantes.pop()
+            p = self.protagonistas.pop()
+            c = self.conflictos.pop()
+            restantes = self.frases_restantes()
         frase = f"{d}, {p}, {c}."
         print(f"[Generador] Frase: {frase}")
-        print(f"[Generador] Restantes: {self.frases_restantes()}")
+        print(f"[Generador] Restantes: {restantes}")
         return frase

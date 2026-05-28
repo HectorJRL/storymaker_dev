@@ -12,6 +12,7 @@ Pinout (SPI0):
   GPIO24 → BUSY
 """
 import time
+import threading
 from PIL import Image, ImageDraw, ImageFont
 try:
     import spidev
@@ -35,6 +36,10 @@ class EPD_4IN2:
         self.dc_pin   = self.pines.get('dc',   25)
         self.rst_pin  = self.pines.get('rst',  17)
         self.busy_pin = self.pines.get('busy', 24)
+
+        # Lock para serializar acceso al bus SPI/GPIO: evita que dos hilos
+        # (botón físico + portal web) escriban simultáneamente y corrompan la pantalla.
+        self._lock = threading.RLock()
 
         if not SPIDEV_DISPONIBLE:
             print("[EInk] Modo simulacion activo.")
@@ -77,12 +82,16 @@ class EPD_4IN2:
         GPIO.output(self.rst_pin, GPIO.HIGH); time.sleep(0.05)
 
     def _esperar_idle(self, timeout_s=10.0):
-        """HIGH = ocupado, LOW = libre (SSD1683)."""
+        """HIGH = ocupado, LOW = libre (SSD1683).
+        Lanza TimeoutError si el panel no responde: permite al llamador
+        reportar el fallo en lugar de continuar con el bus en estado indefinido.
+        """
         t0 = time.time()
         while GPIO.input(self.busy_pin) == GPIO.HIGH:
             if time.time() - t0 > timeout_s:
-                print("[EInk] AVISO: timeout esperando BUSY.")
-                break
+                raise TimeoutError(
+                    f"[EInk] BUSY alto tras {timeout_s:.0f}s — "
+                    "panel desconectado o defectuoso.")
             time.sleep(0.01)
 
     # ------------------------------------------------------------------ #
@@ -179,9 +188,10 @@ class EPD_4IN2:
         if not SPIDEV_DISPONIBLE:
             print("[EInk] Simulacion: mostrar_frame()")
             return
-        self._escribir_frame(0x26, frame)
-        self._escribir_frame(0x24, frame)
-        self._actualizar()
+        with self._lock:
+            self._escribir_frame(0x26, frame)
+            self._escribir_frame(0x24, frame)
+            self._actualizar()
         print("[EInk] Frame mostrado.")
 
     def mostrar(self, imagen: Image.Image):
@@ -189,22 +199,27 @@ class EPD_4IN2:
         if not SPIDEV_DISPONIBLE:
             print(f"[EInk] Simulacion: imagen {imagen.size}")
             return
-        frame = self.imagen_a_frame(imagen)
-        self.mostrar_frame(frame)
+        frame = self.imagen_a_frame(imagen)  # CPU puro, fuera del lock
+        with self._lock:
+            self._escribir_frame(0x26, frame)
+            self._escribir_frame(0x24, frame)
+            self._actualizar()
         print("[EInk] Imagen actualizada.")
 
     def limpiar(self):
         frame = bytearray([0xFF] * (self.ANCHO // 8 * self.ALTO))
-        self._escribir_frame(0x26, frame)
-        self._escribir_frame(0x24, frame)
-        self._actualizar()
+        with self._lock:
+            self._escribir_frame(0x26, frame)
+            self._escribir_frame(0x24, frame)
+            self._actualizar()
         print("[EInk] Pantalla limpiada.")
 
     def sleep(self):
         if not SPIDEV_DISPONIBLE:
             return
-        self._cmd(0x10)
-        self._dat(0x01)
+        with self._lock:
+            self._cmd(0x10)
+            self._dat(0x01)
         print("[EInk] Modo sleep.")
 
 

@@ -56,7 +56,21 @@ def al_pulsar_corto():
         boton.led.off()
         boton.parpadear(2, 0.1)
 
-    frase      = generador.generar_frase()
+    frase = generador.generar_frase()
+    if frase is None:
+        # Frases agotadas: otro hilo consumió la última entre la comprobación
+        # anterior y este punto. Tratarlo igual que el caso de lista vacía.
+        config  = cargar_config()
+        mensaje = config.get('mensaje_sin_frases',
+                             'Se han agotado las combinaciones. Reinicia el dispositivo.')
+        print("[Main] Frases agotadas (detectado en generar_frase).")
+        if boton:
+            boton.led.off()
+            boton.parpadear(5, 0.4)
+            boton.led.on()
+        router.enviar(mensaje)
+        return
+
     resultados = router.enviar_con_animacion(frase)
 
     for salida, ok in resultados.items():
