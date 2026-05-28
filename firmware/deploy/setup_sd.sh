@@ -234,8 +234,7 @@ sudo mv /tmp/storymaker-wifi.sh         /usr/local/bin/
 sudo mv /tmp/storymaker-captive.py      /usr/local/bin/
 sudo chmod +x /usr/local/bin/storymaker-wifi.sh
 sudo chmod +x /usr/local/bin/storymaker-captive.py
-sudo mv /tmp/storymaker-shutdown /etc/sudoers.d/
-sudo chmod 440 /etc/sudoers.d/storymaker-shutdown
+sudo install -m 440 -o root -g root /tmp/storymaker-shutdown /etc/sudoers.d/storymaker-shutdown
 
 sudo systemctl daemon-reload
 sudo systemctl enable avahi-daemon
