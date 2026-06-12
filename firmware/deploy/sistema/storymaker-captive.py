@@ -13,6 +13,8 @@ from flask import Flask, request, redirect, jsonify
 
 app = Flask(__name__)
 
+CONFIG_PATH = '/home/storymaker/proyecto/data/config.json'
+
 # Estado compartido de la última conexión intentada
 _estado = {"intentando": False, "resultado": None, "ssid": ""}
 _estado_lock = threading.Lock()
@@ -253,6 +255,32 @@ def signal_icon(dbm):
     if dbm >= 50: return '▂▄▆_'
     if dbm >= 25: return '▂▄__'
     return '▂___'
+
+
+def obtener_ip_wifi():
+    """IP de wlan0 una vez conectado al router (excluye rango AP 10.42.x.x)."""
+    try:
+        out = subprocess.run(
+            ['nmcli', '-t', '-f', 'IP4.ADDRESS', 'device', 'show', 'wlan0'],
+            timeout=5, capture_output=True, text=True
+        ).stdout.strip()
+        for line in out.splitlines():
+            if 'IP4.ADDRESS' in line:
+                ip = line.split(':')[-1].split('/')[0].strip()
+                if ip and not ip.startswith('10.42.'):
+                    return ip
+    except Exception:
+        pass
+    return None
+
+
+def es_primer_arranque():
+    """True si setup_completado no está en config.json o es False."""
+    try:
+        with open(CONFIG_PATH, encoding='utf-8') as f:
+            return not json.load(f).get('setup_completado', False)
+    except Exception:
+        return True
 
 
 def guardar_y_conectar(ssid, password):
@@ -531,7 +559,25 @@ def conectar():
         if (data.resultado === 'ok') {{
           msg.className = 'msg ok';
           msg.innerHTML = '✓ Conectado a <strong>' + ssid + '</strong>';
-          result.innerHTML = '<div class="msg ok" style="margin-top:.5rem">La red ha sido guardada. El dispositivo la recordará en futuros arranques.<br><br>Puedes cerrar esta ventana.</div>';
+          var nextHtml;
+          if (data.primer_arranque) {{
+            var urlLocal = 'http://storymaker.local:5000';
+            var ipExtra = data.ip
+              ? '<br><small style="color:#555">o por IP: <a href="http://' + data.ip + ':5000" style="color:inherit">http://' + data.ip + ':5000</a></small>'
+              : '';
+            nextHtml = '<div class="msg ok" style="margin-top:.5rem">' +
+              '<strong>Paso 2 — Configuración del hardware</strong><br><br>' +
+              'Reconecta este dispositivo a tu red WiFi y abre:<br><br>' +
+              '<a href="' + urlLocal + '" style="font-weight:700;color:inherit">' + urlLocal + '</a>' +
+              ipExtra +
+              '<br><br><small style="color:#777">PIN inicial: <strong>1234</strong> (te pedirá cambiarlo).</small>' +
+              '</div>';
+          }} else {{
+            nextHtml = '<div class="msg ok" style="margin-top:.5rem">' +
+              'La red ha sido guardada. El dispositivo la recordará en futuros arranques.' +
+              '<br><br>Puedes cerrar esta ventana.</div>';
+          }}
+          result.innerHTML = nextHtml;
         }} else if (data.resultado === 'timeout') {{
           msg.className = 'msg err';
           msg.innerHTML = '⚠ Tiempo de espera agotado';
@@ -568,11 +614,15 @@ def conectar():
 @app.route('/estado')
 def estado():
     with _estado_lock:
-        return jsonify({
+        data = {
             'intentando': _estado['intentando'],
-            'resultado': _estado['resultado'],
-            'ssid': _estado['ssid'],
-        })
+            'resultado':  _estado['resultado'],
+            'ssid':       _estado['ssid'],
+        }
+    if data['resultado'] == 'ok':
+        data['ip']              = obtener_ip_wifi()
+        data['primer_arranque'] = es_primer_arranque()
+    return jsonify(data)
 
 
 if __name__ == '__main__':

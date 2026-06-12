@@ -92,15 +92,16 @@ def login_requerido(f):
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     error = None
+    config = cargar_config()
     if request.method == 'POST':
-        config = cargar_config()
         if request.form.get('pin') == config.get('pin', PIN_DEFAULT):
             session['autenticado'] = True
             if not config.get('setup_completado', False):
                 return redirect(url_for('setup'))
             return redirect(url_for('index'))
         error = "PIN incorrecto"
-    return _render_login(error)
+    primer_arranque = not config.get('setup_completado', False)
+    return _render_login(error, primer_arranque)
 
 @app.route('/api/generar', methods=['POST'])
 @login_requerido
@@ -378,8 +379,15 @@ def _page_wrap(title, body, extra_css="", extra_head=""):
 # ------------------------------------------------------------------ #
 # Login                                                               #
 # ------------------------------------------------------------------ #
-def _render_login(error=None):
+def _render_login(error=None, primer_arranque=False):
     error_html = f'<p class="form-error">{error}</p>' if error else ''
+    hint_html  = '''
+<div class="primer-arranque-box">
+  <p class="primer-arranque-titulo">Primera configuración</p>
+  <p>PIN inicial: <strong>1234</strong></p>
+  <p class="primer-arranque-sub">Podrás cambiarlo en el siguiente paso.</p>
+</div>''' if primer_arranque else ''
+
     css = """
 body {
   display: flex; align-items: center; justify-content: center;
@@ -407,10 +415,19 @@ body {
 .login-sub {
   font-size: .8rem; color: var(--ink2);
   text-transform: uppercase; letter-spacing: .1em;
-  margin-bottom: 2rem;
+  margin-bottom: 1.5rem;
   padding-bottom: 1.25rem;
   border-bottom: 1px solid var(--border);
 }
+.primer-arranque-box {
+  margin-bottom: 1.5rem; padding: .8rem 1rem;
+  background: #fef9ec; border-left: 3px solid #d4a017;
+  font-size: .84rem; line-height: 1.55;
+}
+.primer-arranque-titulo {
+  font-weight: 600; margin-bottom: .2rem; color: #7a5800;
+}
+.primer-arranque-sub { color: var(--ink2); font-size: .78rem; margin-top: .15rem; }
 .form-label {
   display: block; font-size: .72rem; font-weight: 500;
   text-transform: uppercase; letter-spacing: .08em;
@@ -444,6 +461,7 @@ body {
 <div class="login-card">
   <div class="login-logo">Story<em>Maker</em></div>
   <p class="login-sub">Panel de control</p>
+  {hint_html}
   <form method="POST">
     <label class="form-label" for="pin">PIN de acceso</label>
     <input class="pin-input" type="password" id="pin" name="pin"
@@ -533,7 +551,7 @@ body { display: flex; align-items: flex-start; justify-content: center; padding:
         <input type="checkbox" id="eink" name="eink" {eink_chk}>
         <label class="toggle-label" for="eink">Pantalla e-ink</label>
       </div>
-      <p class="toggle-desc">WeAct Studio 4.2" · SSD1619 · SPI0</p>
+      <p class="toggle-desc">WeAct Studio 4.2" · SSD1683 · SPI0</p>
     </div>
 
     <div class="section">
