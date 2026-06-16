@@ -101,7 +101,7 @@ REMOTE
 # PASO 2 — Hardware: SPI, UART, I2S y grupos de usuario
 # =============================================================================
 echo ""
-echo "[2/8] Habilitando hardware (SPI, UART, I2S)..."
+echo "[2/8] Habilitando hardware (SPI, UART, I2S) y journald..."
 
 ssh "$PI" bash <<'REMOTE'
 set -euo pipefail
@@ -129,7 +129,15 @@ sudo sed -i 's/console=ttyAMA0,[0-9]* //g' "$CMDLINE"
 # Grupos de hardware
 sudo usermod -aG spi,gpio,dialout,audio storymaker
 
-echo "      → Hardware configurado"
+# journald — almacenamiento volátil para no saturar la SD en producción
+sudo mkdir -p /etc/systemd/journald.conf.d
+sudo tee /etc/systemd/journald.conf.d/storymaker.conf > /dev/null <<'JOURNALD'
+[Journal]
+Storage=volatile
+SystemMaxUse=32M
+JOURNALD
+
+echo "      → Hardware y journald configurados"
 REMOTE
 
 # =============================================================================
