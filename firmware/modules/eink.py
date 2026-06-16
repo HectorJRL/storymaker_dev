@@ -283,32 +283,58 @@ class PantallaEInk:
             self.epd.mostrar_frame(self._frame_pensando)
 
     def mostrar_texto(self, texto: str):
+        """Renderiza el texto centrado, reduciendo el tamaño de fuente
+        automáticamente hasta que todo el contenido cabe en pantalla.
+        Garantiza que el texto nunca quede cortado, aunque sea pequeño.
+        Tamaño mínimo: 10px. Tamaño máximo: TAM_FUENTE (24px).
+        """
         ancho_util = self.epd.ANCHO - 2 * self.MARGEN
+        alto_util  = self.epd.ALTO  - 2 * self.MARGEN
+
         img  = Image.new('1', (self.epd.ANCHO, self.epd.ALTO), 1)
         draw = ImageDraw.Draw(img)
-        try:
-            font = ImageFont.truetype(self.FUENTE_PATH, self.TAM_FUENTE)
-        except Exception:
-            font = ImageFont.load_default()
 
-        palabras  = texto.split()
-        lineas    = []
-        linea_act = ""
-        for palabra in palabras:
-            prueba = (linea_act + " " + palabra).strip()
-            bbox   = draw.textbbox((0, 0), prueba, font=font)
-            if bbox[2] - bbox[0] <= ancho_util:
-                linea_act = prueba
-            else:
-                if linea_act:
-                    lineas.append(linea_act)
-                linea_act = palabra
-        if linea_act:
-            lineas.append(linea_act)
+        def calcular_lineas(font, tam):
+            """Hace word-wrap del texto con la fuente dada y devuelve
+            (lineas, interlinea, alto_bloque)."""
+            palabras  = texto.split()
+            lineas    = []
+            linea_act = ""
+            for palabra in palabras:
+                prueba = (linea_act + " " + palabra).strip()
+                bbox   = draw.textbbox((0, 0), prueba, font=font)
+                if bbox[2] - bbox[0] <= ancho_util:
+                    linea_act = prueba
+                else:
+                    if linea_act:
+                        lineas.append(linea_act)
+                    linea_act = palabra
+            if linea_act:
+                lineas.append(linea_act)
+            interlinea  = tam + 8
+            alto_bloque = len(lineas) * interlinea
+            return lineas, interlinea, alto_bloque
 
+        # Reducir tamaño hasta que el bloque de texto quepa verticalmente
+        font   = None
+        lineas = []
         interlinea = self.TAM_FUENTE + 8
-        bloque_h   = len(lineas) * interlinea
-        y          = max(self.MARGEN, (self.epd.ALTO - bloque_h) // 2)
+        for tam in range(self.TAM_FUENTE, 9, -1):
+            try:
+                f = ImageFont.truetype(self.FUENTE_PATH, tam)
+            except Exception:
+                f = ImageFont.load_default()
+            ls, il, alto = calcular_lineas(f, tam)
+            if alto <= alto_util:
+                font, lineas, interlinea = f, ls, il
+                break
+        else:
+            # Fallback extremo: fuente por defecto si nada cabe
+            font = ImageFont.load_default()
+            lineas, interlinea, _ = calcular_lineas(font, 10)
+
+        bloque_h = len(lineas) * interlinea
+        y = max(self.MARGEN, (self.epd.ALTO - bloque_h) // 2)
         for linea in lineas:
             bbox = draw.textbbox((0, 0), linea, font=font)
             x    = (self.epd.ANCHO - (bbox[2] - bbox[0])) // 2
