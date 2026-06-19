@@ -11,7 +11,9 @@ def get_ip():
             ['hostname', '-I'], capture_output=True, text=True, timeout=3
         )
         ips = result.stdout.strip().split()
-        return ips[0] if ips else None
+        # Excluir rango del AP propio (10.42.x.x) para no devolver la IP del AP como IP de cliente
+        real = next((ip for ip in ips if not ip.startswith('10.42.')), None)
+        return real if real else (ips[0] if ips else None)
     except Exception:
         return None
 

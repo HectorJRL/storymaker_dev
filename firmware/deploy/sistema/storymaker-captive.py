@@ -8,7 +8,7 @@ Portal cautivo de configuración WiFi. Solo activo en modo AP.
 - Feedback real con polling de estado
 Instalar en: /usr/local/bin/storymaker-captive.py
 """
-import subprocess, threading, time, json, re
+import subprocess, threading, time, json, re, os
 from flask import Flask, request, redirect, jsonify
 
 app = Flask(__name__)
@@ -18,6 +18,11 @@ CONFIG_PATH = '/home/storymaker/proyecto/data/config.json'
 # Estado compartido de la última conexión intentada
 _estado = {"intentando": False, "resultado": None, "ssid": ""}
 _estado_lock = threading.Lock()
+
+
+def _en_modo_ap():
+    """True si el AP propio está activo (flag creado por storymaker-wifi.sh)."""
+    return os.path.exists('/run/storymaker-ap-mode')
 
 # ─────────────────────────────────────────────────────────────
 # CSS — diseño tipográfico editorial, optimizado para móvil
@@ -223,7 +228,7 @@ def escanear_redes():
 
     try:
         out = subprocess.run(
-            ['nmcli', '-t', '-f', 'SSID,SIGNAL,SECURITY', 'device', 'wifi', 'list', 'ifname', 'wlan0'],
+            ['nmcli', '-t', '-e', 'no', '-f', 'SSID,SIGNAL,SECURITY', 'device', 'wifi', 'list', 'ifname', 'wlan0'],
             timeout=10, capture_output=True, text=True
         ).stdout.strip()
     except Exception:
@@ -232,7 +237,8 @@ def escanear_redes():
     vistas = set()
     redes = []
     for linea in out.splitlines():
-        partes = linea.split(':')
+        # rsplit desde la derecha: SIGNAL y SECURITY nunca contienen ':', pero SSID sí puede
+        partes = linea.rsplit(':', 2)
         if len(partes) < 2:
             continue
         ssid = partes[0].strip()
@@ -333,7 +339,7 @@ def guardar_y_conectar(ssid, password):
         # Activar la conexión
         r2 = subprocess.run(
             ['nmcli', 'connection', 'up', ssid, 'ifname', 'wlan0'],
-            timeout=30, capture_output=True, text=True
+            timeout=45, capture_output=True, text=True
         )
 
         if r2.returncode == 0:
@@ -503,10 +509,18 @@ def index(path):
 
 @app.route('/conectar', methods=['POST'])
 def conectar():
+    # Solo aceptar peticiones cuando el AP propio está activo
+    if not _en_modo_ap():
+        return '', 403
+
     ssid     = (request.form.get('ssid') or request.form.get('ssid-manual') or '').strip()
     password = request.form.get('password', '').strip()
 
     if not ssid:
+        return redirect('/')
+    if len(ssid.encode()) > 32:
+        return redirect('/')
+    if password and not (8 <= len(password) <= 63):
         return redirect('/')
 
     # Lanzar en hilo separado
@@ -536,14 +550,14 @@ def conectar():
   <div id="result-area"></div>
 
   <div class="footer">
-    Si la contraseña es correcta, el dispositivo se conectará
-    y recordará esta red para el futuro.
+    Al conectar, el dispositivo abandona este AP y esta página dejará de responder.
+    Busca la IP en la pantalla del dispositivo para continuar.
   </div>
 </div>
 <script>
   var ssid = {json.dumps(ssid)};
   var intentos = 0;
-  var maxIntentos = 20;  // 40 segundos máximo
+  var maxIntentos = 30;  // 60 segundos máximo
 
   function checkEstado() {{
     fetch('/estado')

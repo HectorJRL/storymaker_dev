@@ -170,6 +170,15 @@ else
         connection.autoconnect no
     echo "      → Perfil AP creado"
 fi
+
+# DNS hijacking: todo dominio resuelve a 10.42.0.1 en modo AP.
+# Sin esto, iOS/Android/Windows no llegan a hacer la petición HTTP al detector
+# y el captive portal no se dispara automáticamente.
+sudo mkdir -p /etc/NetworkManager/dnsmasq-shared.d
+sudo tee /etc/NetworkManager/dnsmasq-shared.d/captive.conf > /dev/null <<'DNSMASQ'
+address=/#/10.42.0.1
+DNSMASQ
+echo "      → DNS hijacking configurado (dnsmasq-shared.d/captive.conf)"
 REMOTE
 
 # =============================================================================
