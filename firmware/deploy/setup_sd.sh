@@ -30,6 +30,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FIRMWARE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SISTEMA_DIR="${SCRIPT_DIR}/sistema"
 
+# ControlMaster: la primera conexión autentica; todas las demás la reutilizan
+# → cero prompts de contraseña tras el paso 0
+SSH_KEY="${PUBKEY_LOCAL%.pub}"
+SSH_OPTS="-i ${SSH_KEY} -o ControlMaster=auto -o ControlPath=/tmp/ssh-sm-%r@%h:%p -o ControlPersist=10m"
+
 # ── Validaciones ──────────────────────────────────────────────────────────────
 if [ -z "$IP" ]; then
     echo "Uso: $0 <ip_de_la_pi> [clave_publica.pub]"
@@ -74,7 +79,7 @@ echo ""
 echo "[1/8] Instalando paquetes del sistema..."
 echo "      (puede tardar varios minutos en el Zero 2W)"
 
-ssh "$PI" bash <<'REMOTE'
+ssh $SSH_OPTS "$PI" bash <<'REMOTE'
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
@@ -103,7 +108,7 @@ REMOTE
 echo ""
 echo "[2/8] Habilitando hardware (SPI, UART, I2S) y journald..."
 
-ssh "$PI" bash <<'REMOTE'
+ssh $SSH_OPTS "$PI" bash <<'REMOTE'
 set -euo pipefail
 CONFIG=/boot/firmware/config.txt
 CMDLINE=/boot/firmware/cmdline.txt
@@ -146,7 +151,7 @@ REMOTE
 echo ""
 echo "[3/8] Configurando red y perfil AP..."
 
-ssh "$PI" bash <<'REMOTE'
+ssh $SSH_OPTS "$PI" bash <<'REMOTE'
 set -euo pipefail
 
 # Arranque más rápido: no esperar a que la red conecte
@@ -187,7 +192,7 @@ REMOTE
 echo ""
 echo "[4/8] Configurando iptables para captive portal..."
 
-ssh "$PI" bash <<'REMOTE'
+ssh $SSH_OPTS "$PI" bash <<'REMOTE'
 set -euo pipefail
 
 # Redirigir HTTP (80) → portal cautivo Flask (8080) en modo AP
@@ -208,7 +213,7 @@ REMOTE
 echo ""
 echo "[5/8] Configurando ALSA..."
 
-ssh "$PI" bash <<'REMOTE'
+ssh $SSH_OPTS "$PI" bash <<'REMOTE'
 set -euo pipefail
 
 sudo tee /etc/asound.conf > /dev/null <<'ASOUND'
@@ -249,14 +254,14 @@ REMOTE
 echo ""
 echo "[6/8] Instalando servicios y scripts del sistema..."
 
-scp "$SISTEMA_DIR/historias.service"          "${PI}:/tmp/"
-scp "$SISTEMA_DIR/storymaker-wifi.service"    "${PI}:/tmp/"
-scp "$SISTEMA_DIR/storymaker-captive.service" "${PI}:/tmp/"
-scp "$SISTEMA_DIR/storymaker-wifi.sh"         "${PI}:/tmp/"
-scp "$SISTEMA_DIR/storymaker-captive.py"      "${PI}:/tmp/"
-scp "$SISTEMA_DIR/storymaker-shutdown"        "${PI}:/tmp/"
+scp $SSH_OPTS "$SISTEMA_DIR/historias.service"          "${PI}:/tmp/"
+scp $SSH_OPTS "$SISTEMA_DIR/storymaker-wifi.service"    "${PI}:/tmp/"
+scp $SSH_OPTS "$SISTEMA_DIR/storymaker-captive.service" "${PI}:/tmp/"
+scp $SSH_OPTS "$SISTEMA_DIR/storymaker-wifi.sh"         "${PI}:/tmp/"
+scp $SSH_OPTS "$SISTEMA_DIR/storymaker-captive.py"      "${PI}:/tmp/"
+scp $SSH_OPTS "$SISTEMA_DIR/storymaker-shutdown"        "${PI}:/tmp/"
 
-ssh "$PI" bash <<'REMOTE'
+ssh $SSH_OPTS "$PI" bash <<'REMOTE'
 set -euo pipefail
 
 sudo mv /tmp/historias.service          /etc/systemd/system/
@@ -283,7 +288,7 @@ REMOTE
 echo ""
 echo "[7/8] Preparando entorno Python..."
 
-ssh "$PI" bash <<'REMOTE'
+ssh $SSH_OPTS "$PI" bash <<'REMOTE'
 set -euo pipefail
 
 mkdir -p /home/storymaker/proyecto
@@ -318,10 +323,10 @@ tar -czf "/tmp/$PAQUETE" \
 SIZE=$(du -h "/tmp/$PAQUETE" | cut -f1)
 echo "      → Paquete: $PAQUETE ($SIZE)"
 
-scp "/tmp/$PAQUETE" "${PI}:/tmp/"
+scp $SSH_OPTS "/tmp/$PAQUETE" "${PI}:/tmp/"
 rm -f "/tmp/$PAQUETE"
 
-ssh "$PI" bash <<REMOTE
+ssh $SSH_OPTS "$PI" bash <<REMOTE
 set -e
 tar -xzf /tmp/${PAQUETE} -C /home/storymaker/proyecto
 rm -f /tmp/${PAQUETE}
@@ -333,7 +338,7 @@ REMOTE
 # =============================================================================
 echo ""
 echo "Verificando instalación..."
-ssh "$PI" bash <<'REMOTE'
+ssh $SSH_OPTS "$PI" bash <<'REMOTE'
 OK=0; FAIL=0
 
 check() {
@@ -368,7 +373,7 @@ REMOTE
 echo ""
 echo "Reiniciando la Pi..."
 echo "(necesario para activar SPI, UART e I2S desde config.txt)"
-ssh "$PI" "sudo reboot" || true
+ssh $SSH_OPTS "$PI" "sudo reboot" || true
 
 echo ""
 echo "╔══════════════════════════════════════════════════════╗"
