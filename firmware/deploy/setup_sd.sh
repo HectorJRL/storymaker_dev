@@ -48,6 +48,12 @@ if [ ! -f "$PUBKEY_LOCAL" ]; then
     exit 1
 fi
 
+if [ ! -f "$SSH_KEY" ]; then
+    echo "ERROR: clave privada no encontrada: $SSH_KEY"
+    echo "(Se deriva de la pública: ${PUBKEY_LOCAL%.pub})"
+    exit 1
+fi
+
 for f in historias.service storymaker-wifi.service storymaker-captive.service \
           storymaker-wifi.sh storymaker-captive.py storymaker-shutdown; do
     if [ ! -f "$SISTEMA_DIR/$f" ]; then
