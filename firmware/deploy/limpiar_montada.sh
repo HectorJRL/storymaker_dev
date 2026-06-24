@@ -48,9 +48,16 @@ with open(path, encoding='utf-8') as f:
     cfg = json.load(f)
 cfg['setup_completado'] = False
 cfg.pop('flask_secret', None)
+# Reset hardware a fábrica: todo desactivado, volumen neutro
+hw = cfg.setdefault('hardware', {})
+hw.setdefault('eink', {})['activada'] = False
+hw.setdefault('impresora', {})['activada'] = False
+audio = hw.setdefault('audio', {})
+audio['activada'] = False
+audio['volumen'] = 50
 with open(path, 'w', encoding='utf-8') as f:
     json.dump(cfg, f, ensure_ascii=False, indent=4)
-print("      → config.json limpiado")
+print("      → config.json reseteado a fábrica")
 PYEOF
 else
     echo "      → config.json no encontrado (omitido)"

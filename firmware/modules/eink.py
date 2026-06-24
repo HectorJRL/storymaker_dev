@@ -446,10 +446,11 @@ class PantallaEInk:
         self.epd.mostrar(canvas)
         print("[EInk] Pantalla de despedida mostrada.")
 
-    def mostrar_bienvenida(self):
+    def mostrar_bienvenida(self, modo=None, ip=None):
         """
         Muestra pantalla de bienvenida al arrancar.
         Detecta el modo de red y muestra QR + logo o advertencia según el caso.
+        Acepta modo/ip opcionales para evitar llamadas redundantes a nmcli.
         """
         import os
         try:
@@ -459,6 +460,10 @@ class PantallaEInk:
             return
 
         from modules.netinfo import get_wifi_mode, get_ip
+        if modo is None:
+            modo = get_wifi_mode()
+        if ip is None:
+            ip = get_ip()
 
         W, H = self.epd.ANCHO, self.epd.ALTO
         TITULO = "La asombrosa máquina de generar historias"
@@ -497,10 +502,6 @@ class PantallaEInk:
                 draw.text(((W - (bbox[2]-bbox[0])) // 2, y), l, font=font_titulo, fill=0)
                 y += 24
             return y
-
-        # ── Detectar modo de red ──────────────────────────────────────────
-        modo = get_wifi_mode()
-        ip   = get_ip()
 
         if modo == 'client' and ip:
             url        = f"http://{ip}:5000"

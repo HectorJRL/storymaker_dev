@@ -24,7 +24,7 @@
             "activada": false,
             "motor": "edge-tts",
             "voz": "es-ES-ElviraNeural",
-            "volumen": 55
+            "volumen": 50
         }
     },
     "boton": {

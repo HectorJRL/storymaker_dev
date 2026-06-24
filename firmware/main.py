@@ -171,26 +171,83 @@ def main():
         print(f"[Main] http://<ip-de-la-pi>:{config.get('portal', {}).get('puerto', 5000)}")
         print("[Main] Esperando en modo portal...")
 
-        # Mostrar pantalla de setup en e-ink: QR + "Escanea para configurar el WiFi"
+        from modules.eink import PantallaEInk
+        from modules.netinfo import get_wifi_mode, get_ip
+        from modules.audio import Audio
+
+        cfg_eink      = config.get('hardware', {}).get('eink', {})
+        cfg_impresora = config.get('hardware', {}).get('impresora', {})
+        cfg_audio     = dict(config.get('hardware', {}).get('audio', {}))
+        cfg_audio['activada'] = True  # forzar activo para anuncio de setup
+
+        pantalla_setup  = None
+        impresora_setup = None
+        audio_setup     = None
+
         try:
-            from modules.eink import PantallaEInk
-            from modules.netinfo import get_wifi_mode
-            cfg_eink = config.get('hardware', {}).get('eink', {})
             pantalla_setup = PantallaEInk(cfg_eink)
-            # Esperar hasta 12 s a que NetworkManager levante el AP
-            for _ in range(6):
-                if get_wifi_mode() != 'none':
-                    break
-                time.sleep(2)
-            pantalla_setup.mostrar_bienvenida()
         except Exception as e:
-            print(f"[Main] AVISO: no se pudo mostrar pantalla de setup en e-ink: {e}")
+            print(f"[Main] E-ink no disponible en setup: {e}")
+
+        try:
+            from modules.impresora import Impresora
+            impresora_setup = Impresora(cfg_impresora)
+        except Exception as e:
+            print(f"[Main] Impresora no disponible en setup: {e}")
+
+        try:
+            audio_setup = Audio(cfg_audio)
+        except Exception as e:
+            print(f"[Main] Audio no disponible en setup: {e}")
+
+        def _anunciar_setup(modo, ip):
+            if modo == 'ap':
+                texto_audio     = "Conecta tu movil a la red StoryMaker-Setup para configurar el WiFi."
+                texto_impresora = "StoryMaker - Primera configuracion\nConecta al WiFi: StoryMaker-Setup\nPortal: http://10.42.0.1:8080"
+            elif modo == 'client' and ip:
+                texto_audio     = f"StoryMaker esta en linea. Accede al portal en la direccion {ip}, puerto cinco mil."
+                texto_impresora = f"StoryMaker\nPortal: http://{ip}:5000\nO en: http://storymaker.local:5000"
+            else:
+                texto_audio = texto_impresora = None
+
+            if pantalla_setup:
+                try:
+                    pantalla_setup.mostrar_bienvenida(modo=modo, ip=ip)
+                except Exception as e:
+                    print(f"[Main] E-ink setup error: {e}")
+
+            if texto_audio and audio_setup:
+                try:
+                    audio_setup.hablar(texto_audio)
+                except Exception as e:
+                    print(f"[Main] Audio anuncio error: {e}")
+
+            if texto_impresora and impresora_setup:
+                try:
+                    impresora_setup.imprimir(texto_impresora)
+                except Exception as e:
+                    print(f"[Main] Impresora setup error: {e}")
+
+        # Esperar hasta 12 s a que NetworkManager levante la red
+        for _ in range(6):
+            if get_wifi_mode() != 'none':
+                break
+            time.sleep(2)
+
+        # Capturar modo ANTES del anuncio para evitar race condition en _modo_red
+        _modo_red = get_wifi_mode()
+        _anunciar_setup(modo=_modo_red, ip=get_ip())
 
         signal.signal(signal.SIGINT,  cleanup)
         signal.signal(signal.SIGTERM, cleanup)
         while True:
             time.sleep(5)
             try:
+                modo_actual = get_wifi_mode()
+                if modo_actual != _modo_red and modo_actual in ('client', 'ap'):
+                    _modo_red = modo_actual
+                    _anunciar_setup(modo=_modo_red, ip=get_ip())
+
                 config_nueva = cargar_config()
                 if config_nueva.get('setup_completado', False):
                     print("[Main] Setup completado. Reiniciando servicio...")

@@ -138,7 +138,7 @@ if [ "$LOCAL" = true ]; then
         | grep "$ROOT_PART" | grep -oP 'start=\s*\K[0-9]+')
     NEW_SECTORS=$(( (NEW_BYTES + 511) / 512 ))
     NEW_END=$(( START_SECTOR + NEW_SECTORS - 1 ))
-    sudo parted -s "$SD_DEV" resizepart 2 "${NEW_END}s"
+    echo "${START_SECTOR},${NEW_SECTORS}" | sudo sfdisk --no-reread --force -N 2 "$SD_DEV" >/dev/null
     echo "      → Partición raíz encogida a $(( NEW_BYTES / 1024 / 1024 )) MB"
     echo ""
 fi
