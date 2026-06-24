@@ -122,6 +122,17 @@ CSS = """
     -webkit-appearance: none;
   }
 
+  .pass-wrap { position: relative; }
+  .pass-wrap input[type="password"],
+  .pass-wrap input[type="text"] { padding-right: 2.8rem; }
+  .pass-eye {
+    position: absolute; right: .75rem; top: 50%; transform: translateY(-50%);
+    background: none; border: none; cursor: pointer;
+    color: #999; padding: .2rem; line-height: 0;
+    transition: color .15s;
+  }
+  .pass-eye:hover { color: var(--ink); }
+
   select {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%231a1a2e' stroke-width='2' fill='none'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
@@ -345,6 +356,13 @@ def guardar_y_conectar(ssid, password):
         if r2.returncode == 0:
             with _estado_lock:
                 _estado['resultado'] = 'ok'
+            # Si el setup ya estaba completado (AP forzado por botón), reiniciar
+            # historias.service para que la e-ink muestre la IP del portal.
+            if not es_primer_arranque():
+                threading.Timer(5.0, lambda: subprocess.run(
+                    ['systemctl', 'restart', 'historias.service'],
+                    capture_output=True
+                )).start()
         else:
             # Conexión fallida → limpiar perfil guardado para no reconectar con datos malos
             subprocess.run(['nmcli', 'connection', 'delete', ssid],
@@ -460,6 +478,32 @@ def index(path):
 
     n_redes = f"{len(redes)} redes detectadas" if redes else "Sin redes detectadas"
 
+    error     = request.args.get('error', '')
+    ssid_prev = request.args.get('ssid', '')
+    if error == 'pass':
+        error_html = '<div class="msg err" style="margin-bottom:.5rem">✗ Contraseña incorrecta — inténtalo de nuevo.</div>'
+    elif error == 'timeout':
+        error_html = '<div class="msg err" style="margin-bottom:.5rem">⚠ Sin respuesta — comprueba que la red esté dentro de alcance.</div>'
+    else:
+        error_html = ''
+
+    # Pre-selección de SSID si venimos de un error
+    if ssid_prev and script:
+        script += f"""
+          document.addEventListener('DOMContentLoaded', function() {{
+            var sel = document.getElementById('ssid-select');
+            if (sel) {{
+              for (var i = 0; i < sel.options.length; i++) {{
+                if (sel.options[i].value === {json.dumps(ssid_prev)}) {{
+                  sel.selectedIndex = i;
+                  seleccionarRed(sel.options[i].value);
+                  break;
+                }}
+              }}
+            }}
+          }});
+        """
+
     return f"""<!DOCTYPE html>
 <html lang="es"><head>
 <meta charset="UTF-8">
@@ -472,14 +516,23 @@ def index(path):
   <div class="logo">Story<span>Maker</span></div>
   <p class="sub">Conecta el dispositivo a tu red WiFi &nbsp;·&nbsp; {n_redes}</p>
 
+  {error_html}
   <form method="POST" action="/conectar" onsubmit="return validar()">
     <label>Red WiFi</label>
     {selector}
 
     <label for="password">Contraseña</label>
-    <input type="password" id="password" name="password"
-           placeholder="Contraseña (vacía si es abierta)"
-           autocomplete="current-password">
+    <div class="pass-wrap">
+      <input type="password" id="password" name="password"
+             placeholder="Contraseña (vacía si es abierta)"
+             autocomplete="current-password">
+      <button type="button" class="pass-eye" onclick="togglePass()" title="Mostrar/ocultar">
+        <svg id="pass-eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
+      </button>
+    </div>
 
     <button type="submit">Conectar →</button>
   </form>
@@ -488,6 +541,17 @@ def index(path):
 </div>
 <script>
   {script}
+  function togglePass() {{
+    const inp  = document.getElementById('password');
+    const icon = document.getElementById('pass-eye-icon');
+    if (inp.type === 'password') {{
+      inp.type = 'text';
+      icon.innerHTML = '<path d="M17.9 17.9A10.9 10.9 0 0 1 12 20C5 20 1 12 1 12a18.5 18.5 0 0 1 5.1-6.1M9.9 4.2A10.5 10.5 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.2 3.2M1 1l22 22"/><circle cx="12" cy="12" r="3"/>';
+    }} else {{
+      inp.type = 'password';
+      icon.innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+    }}
+  }}
   function validar() {{
     const manual = document.getElementById('ssid-manual');
     const sel = document.getElementById('ssid-select');
@@ -594,17 +658,22 @@ def conectar():
           result.innerHTML = nextHtml;
         }} else if (data.resultado === 'timeout') {{
           msg.className = 'msg err';
-          msg.innerHTML = '⚠ Tiempo de espera agotado';
-          result.innerHTML = '<div class="msg err" style="margin-top:.5rem">No se pudo conectar. Puede que la red esté fuera de alcance.<br><br><a href="/" style="color:inherit">← Intentar de nuevo</a></div>';
+          msg.innerHTML = '⚠ Tiempo de espera agotado — volviendo al formulario…';
+          setTimeout(function() {{
+            window.location.href = '/?error=timeout&ssid=' + encodeURIComponent(ssid);
+          }}, 3000);
         }} else if (data.resultado) {{
           msg.className = 'msg err';
-          msg.innerHTML = '✗ No se pudo conectar';
-          result.innerHTML = '<div class="msg err" style="margin-top:.5rem">Comprueba la contraseña o acércate al router.<br><br><a href="/" style="color:inherit">← Intentar de nuevo</a></div>';
+          msg.innerHTML = '✗ Contraseña incorrecta — volviendo al formulario…';
+          setTimeout(function() {{
+            window.location.href = '/?error=pass&ssid=' + encodeURIComponent(ssid);
+          }}, 3000);
         }} else {{
-          // Sin resultado aún pero agotamos intentos
           msg.className = 'msg err';
-          msg.innerHTML = '⚠ Sin respuesta';
-          result.innerHTML = '<div class="msg err" style="margin-top:.5rem"><a href="/" style="color:inherit">← Volver</a></div>';
+          msg.innerHTML = '⚠ Sin respuesta — volviendo al formulario…';
+          setTimeout(function() {{
+            window.location.href = '/?error=timeout&ssid=' + encodeURIComponent(ssid);
+          }}, 3000);
         }}
       }})
       .catch(() => {{

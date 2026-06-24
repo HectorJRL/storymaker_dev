@@ -278,6 +278,35 @@ def guardar_volumen():
     guardar_config(config)
     return jsonify({'ok': True, 'volumen': volumen})
 
+@app.route('/api/reset_fabrica', methods=['POST'])
+@login_requerido
+def reset_fabrica():
+    config = cargar_config()
+    config['setup_completado'] = False
+    config['pin'] = PIN_DEFAULT
+    guardar_config(config)
+    def _restart():
+        import time as _t
+        _t.sleep(1)
+        import subprocess as _sp
+        _sp.run(['sudo', 'systemctl', 'restart', 'historias.service'], check=False)
+    threading.Thread(target=_restart, daemon=True).start()
+    return jsonify({'ok': True})
+
+@app.route('/api/apagar', methods=['POST'])
+@login_requerido
+def apagar():
+    def _secuencia():
+        if _callback_despedida:
+            try:
+                _callback_despedida()
+            except Exception:
+                pass
+        import subprocess as _sp
+        _sp.run(['sudo', 'shutdown', '-h', 'now'], check=False)
+    threading.Thread(target=_secuencia, daemon=True).start()
+    return jsonify({'ok': True})
+
 @app.route('/api/nuevo_perfil', methods=['POST'])
 @login_requerido
 def nuevo_perfil():
@@ -433,16 +462,23 @@ body {
   text-transform: uppercase; letter-spacing: .08em;
   color: var(--ink2); margin-bottom: .5rem;
 }
+.pin-wrap { position: relative; }
 .pin-input {
-  width: 100%; padding: .9rem 1rem;
+  width: 100%; padding: .9rem 3rem .9rem 1rem;
   border: 1.5px solid var(--border);
   font-size: 1.6rem; letter-spacing: .4em;
   text-align: center; background: var(--paper);
   color: var(--ink); outline: none;
   transition: border-color .15s;
-  -webkit-text-security: disc;
 }
 .pin-input:focus { border-color: var(--accent); }
+.pin-eye {
+  position: absolute; right: .75rem; top: 50%; transform: translateY(-50%);
+  background: none; border: none; cursor: pointer;
+  color: var(--ink2); padding: .2rem; line-height: 0;
+  transition: color .15s;
+}
+.pin-eye:hover { color: var(--accent); }
 .login-btn {
   width: 100%; margin-top: 1.25rem; padding: .9rem;
   background: var(--ink); color: var(--white);
@@ -464,11 +500,32 @@ body {
   {hint_html}
   <form method="POST">
     <label class="form-label" for="pin">PIN de acceso</label>
-    <input class="pin-input" type="password" id="pin" name="pin"
-           maxlength="8" autofocus autocomplete="current-password"
-           inputmode="numeric" placeholder="· · · ·">
+    <div class="pin-wrap">
+      <input class="pin-input" type="password" id="pin" name="pin"
+             maxlength="8" autofocus autocomplete="current-password"
+             inputmode="numeric" placeholder="· · · ·">
+      <button type="button" class="pin-eye" onclick="togglePin()" title="Mostrar/ocultar PIN" id="pin-eye-btn">
+        <svg id="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
+      </button>
+    </div>
     <button class="login-btn" type="submit">Entrar</button>
   </form>
+<script>
+function togglePin() {{
+  const input = document.getElementById('pin');
+  const icon  = document.getElementById('eye-icon');
+  if (input.type === 'password') {{
+    input.type = 'text';
+    icon.innerHTML = '<path d="M17.9 17.9A10.9 10.9 0 0 1 12 20C5 20 1 12 1 12a18.5 18.5 0 0 1 5.1-6.1M9.9 4.2A10.5 10.5 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.2 3.2M1 1l22 22"/><circle cx="12" cy="12" r="3"/>';
+  }} else {{
+    input.type = 'password';
+    icon.innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+  }}
+}}
+</script>
   {error_html}
 </div>"""
     return _page_wrap("Acceso", body, css)
@@ -536,6 +593,22 @@ body { display: flex; align-items: flex-start; justify-content: center; padding:
 .submit-btn:hover { background: var(--accent); }
 .back-link { display: inline-block; font-size: .82rem; color: var(--ink2); margin-top: 1rem; }
 .back-link:hover { color: var(--accent); }
+.danger-zone {
+  margin-top: 2rem; padding: 1.1rem 1.5rem;
+  border: 1.5px solid #e8c4c4; background: #fdf5f5;
+}
+.danger-title {
+  font-size: .7rem; font-weight: 500; text-transform: uppercase;
+  letter-spacing: .1em; color: #a03030; margin-bottom: .45rem;
+}
+.danger-desc { font-size: .82rem; color: var(--ink2); margin-bottom: .9rem; line-height: 1.5; }
+.danger-btn {
+  font-size: .8rem; font-weight: 500; text-transform: uppercase; letter-spacing: .06em;
+  background: none; color: #a03030;
+  border: 1.5px solid #e8c4c4; padding: .5rem 1rem;
+  cursor: pointer; transition: background .12s, border-color .12s;
+}
+.danger-btn:hover { background: #fbeaea; border-color: #c04040; }
 """
     body = f"""
 <div class="setup-wrap">
@@ -600,6 +673,21 @@ body { display: flex; align-items: flex-start; justify-content: center; padding:
     <button class="submit-btn" type="submit">{btn_label}</button>
   </form>
   {back_link}
+
+  <div class="danger-zone">
+    <p class="danger-title">Zona de peligro</p>
+    <p class="danger-desc">El reset de fábrica borra la configuración de hardware y el PIN, y vuelve al primer arranque. Los perfiles y premisas no se borran.</p>
+    <button class="danger-btn" onclick="mostrarConfirmReset()">↺ Reset de fábrica</button>
+    <div id="reset-confirm" style="display:none;margin-top:.85rem;padding:.85rem 1rem;background:#fff0f0;border:1px solid #e8c4c4;">
+      <p style="font-size:.82rem;color:#a03030;margin-bottom:.7rem;line-height:1.5">
+        ¿Confirmas el reset? El PIN volverá a <strong>1234</strong> y el dispositivo volverá a la configuración inicial.
+      </p>
+      <div style="display:flex;gap:.6rem;">
+        <button onclick="ejecutarReset()" style="font-size:.8rem;font-weight:500;padding:.45rem 1rem;background:#a03030;color:#fff;border:none;cursor:pointer;">Sí, resetear</button>
+        <button onclick="cancelarReset()" style="font-size:.8rem;padding:.45rem .9rem;background:none;border:1.5px solid #e8c4c4;cursor:pointer;color:#666;">Cancelar</button>
+      </div>
+    </div>
+  </div>
 </div>
 <script>
 function toggleBaud(v) {{
@@ -607,6 +695,23 @@ function toggleBaud(v) {{
 }}
 function toggleVol(v) {{
   document.getElementById('vol-wrap').style.display = v ? 'block' : 'none';
+}}
+function mostrarConfirmReset() {{
+  document.getElementById('reset-confirm').style.display = 'block';
+}}
+function cancelarReset() {{
+  document.getElementById('reset-confirm').style.display = 'none';
+}}
+async function ejecutarReset() {{
+  const btns = document.querySelectorAll('#reset-confirm button');
+  btns.forEach(b => b.disabled = true);
+  document.querySelector('#reset-confirm p').textContent = 'Reiniciando el dispositivo...';
+  try {{
+    await fetch('/api/reset_fabrica', {{
+      method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: '{{}}'
+    }});
+  }} catch(e) {{}}
+  setTimeout(() => window.location.href = '/', 3000);
 }}
 </script>"""
     return _page_wrap("Setup", body, css)
@@ -806,6 +911,10 @@ body { display: flex; flex-direction: column; }
   color: #888; padding: .3rem .5rem; transition: color .15s;
 }
 .hlink:hover { color: var(--accent2); }
+.hlink-apagar {
+  background: none; border: none; cursor: pointer;
+}
+.hlink-apagar:hover { color: #e05c5c; }
 
 /* ── Layout main ── */
 .main-layout { display: flex; flex: 1; min-height: 0; }
@@ -1034,6 +1143,14 @@ async function cambiarPerfil(p) {{
     setTimeout(() => sel.style.outline = '', 1400);
   }}
 }}
+async function confirmarApagado() {{
+  if (!confirm('¿Apagar el dispositivo?')) return;
+  const btn = document.querySelector('.hlink-apagar');
+  btn.disabled = true;
+  btn.textContent = 'Apagando...';
+  await fetch('/api/apagar', {{method:'POST',
+    headers:{{'Content-Type':'application/json'}}, body:'{{}}'}});
+}}
 </script>
 """ if audio_activo else "<script>async function cambiarPerfil(p){const r=await fetch('/api/cambiar_perfil',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({perfil:p})});}</script>"
 
@@ -1057,6 +1174,10 @@ async function cambiarPerfil(p) {{
     </div>
     <div class="header-links">
       <a href="/setup" class="hlink">⚙ Hardware</a>
+      <button class="hlink hlink-apagar" onclick="confirmarApagado()" title="Apagar el dispositivo">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px"><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+        Apagar
+      </button>
       <a href="/logout" class="hlink">Salir</a>
     </div>
   </div>

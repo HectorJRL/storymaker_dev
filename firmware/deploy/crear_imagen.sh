@@ -127,6 +127,19 @@ if [ "$LOCAL" = true ]; then
     sudo bash "${SCRIPT_DIR}/limpiar_montada.sh" "$ROOTFS"
     sudo umount "$ROOTFS"
     rmdir "$ROOTFS"
+
+    # Encoger el ext4 al mínimo para que dd solo lea datos reales
+    echo "      Pre-encogiendo partición raíz en la SD..."
+    sudo e2fsck -f "$ROOT_PART"
+    sudo resize2fs -M "$ROOT_PART"
+    NEW_BYTES=$(sudo dumpe2fs -h "$ROOT_PART" 2>/dev/null \
+        | awk '/Block count:/{bc=$3} /Block size:/{bs=$3} END{print bc*bs}')
+    START_SECTOR=$(sudo sfdisk -d "$SD_DEV" \
+        | grep "$ROOT_PART" | grep -oP 'start=\s*\K[0-9]+')
+    NEW_SECTORS=$(( (NEW_BYTES + 511) / 512 ))
+    NEW_END=$(( START_SECTOR + NEW_SECTORS - 1 ))
+    sudo parted -s "$SD_DEV" resizepart 2 "${NEW_END}s"
+    echo "      → Partición raíz encogida a $(( NEW_BYTES / 1024 / 1024 )) MB"
     echo ""
 fi
 

@@ -60,7 +60,7 @@ class Generador:
             p = self.protagonistas.pop()
             c = self.conflictos.pop()
             restantes = self.frases_restantes()
-        frase = f"{d}, {p}, {c}."
+        frase = f"{d}, {p} {c}."
         print(f"[Generador] Frase: {frase}")
         print(f"[Generador] Restantes: {restantes}")
         return frase

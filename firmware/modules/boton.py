@@ -19,6 +19,70 @@ except ImportError:
     print("[Boton] AVISO: RPi.GPIO no disponible. Modo simulación activo.")
 
 
+def detectar_boton_arranque(pin: int = 5, duracion: float = 3.0,
+                            pin_led: int = None) -> bool:
+    """
+    Lee el botón al arrancar ANTES de crear el objeto Boton.
+    Devuelve True si está pulsado y se mantiene durante `duracion` segundos.
+
+    Feedback LED durante el proceso:
+      - Parpadeo lento (0.5s): pulsación detectada, sigue manteniendo
+      - Parpadeo rápido (0.1s): confirmado, suelta el botón
+      - LED apagado al salir: main.py lo gestiona a partir de aquí
+    """
+    if not GPIO_DISPONIBLE:
+        return False
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setwarnings(False)
+    GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+
+    if GPIO.input(pin) != GPIO.LOW:
+        return False
+
+    if pin_led is not None:
+        GPIO.setup(pin_led, GPIO.OUT)
+        GPIO.output(pin_led, GPIO.LOW)
+
+    def _led(state):
+        if pin_led is not None:
+            GPIO.output(pin_led, GPIO.HIGH if state else GPIO.LOW)
+
+    print(f"[Boton] Pulsado al arranque — mantén {duracion}s para forzar AP...")
+
+    # Fase 1: parpadeo lento mientras se espera la confirmación
+    t0 = time.time()
+    blink_t = t0
+    blink_state = False
+    while True:
+        if GPIO.input(pin) != GPIO.LOW:
+            _led(False)
+            return False  # soltado antes de tiempo
+        elapsed = time.time() - t0
+        if elapsed >= duracion:
+            break
+        if time.time() - blink_t >= 0.5:
+            blink_state = not blink_state
+            _led(blink_state)
+            blink_t = time.time()
+        time.sleep(0.02)
+
+    print("[Boton] Confirmado — suelta el botón.")
+
+    # Fase 2: parpadeo rápido hasta que se suelte
+    blink_t = time.time()
+    while GPIO.input(pin) == GPIO.LOW:
+        if time.time() - blink_t >= 0.1:
+            blink_state = not blink_state
+            _led(blink_state)
+            blink_t = time.time()
+        time.sleep(0.02)
+
+    _led(False)
+    time.sleep(0.15)  # debounce
+    print("[Boton] Botón suelto.")
+    return True
+
+
 class SimpleLED:
     def __init__(self, pin, active_high=True):
         self.pin = pin

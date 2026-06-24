@@ -22,9 +22,30 @@ sys.path.insert(0, PROJECT_DIR)
 
 from modules.config_manager import cargar_config
 from modules.generador      import Generador
-from modules.boton          import Boton
+from modules.boton          import Boton, detectar_boton_arranque, SimpleLED
 from modules.salidas        import RouterSalidas
 from modules.portal         import Portal
+
+
+def _forzar_ap():
+    """Desconecta el WiFi de cliente y activa el AP StoryMaker-Setup."""
+    try:
+        result = subprocess.run(
+            ['nmcli', '-t', '-f', 'NAME,TYPE', 'connection', 'show', '--active'],
+            capture_output=True, text=True, timeout=5
+        )
+        for line in result.stdout.splitlines():
+            if line.endswith(':802-11-wireless'):
+                name = line[:-len(':802-11-wireless')]
+                if name != 'StoryMaker-Setup':
+                    print(f"[Main] Bajando conexión WiFi: {name}")
+                    subprocess.run(['nmcli', 'connection', 'down', name],
+                                   capture_output=True, timeout=5)
+        subprocess.run(['nmcli', 'connection', 'up', 'StoryMaker-Setup'],
+                       capture_output=True, timeout=5)
+        print("[Main] Modo AP forzado.")
+    except Exception as e:
+        print(f"[Main] Error al forzar AP: {e}")
 
 
 generador = None
@@ -131,6 +152,15 @@ def main():
         print(f"[Main] ERROR CRÍTICO: {e}")
         sys.exit(1)
 
+    # 1.5 Detección de botón al arranque → forzar AP
+    pin_boton = config.get('boton', {}).get('pin_gpio', 5)
+    pin_led   = config.get('led',   {}).get('pin_gpio', 23)
+    if detectar_boton_arranque(pin_boton, pin_led=pin_led):
+        _forzar_ap()
+        # 3 parpadeos lentos: AP activo
+        _led_boot = SimpleLED(pin_led)
+        _led_boot.blink(on_time=0.4, off_time=0.4, n=3)
+
     # 2. Portal web (siempre, incluso antes del setup)
     portal = Portal(config)
     portal.iniciar()
@@ -140,6 +170,22 @@ def main():
         print("[Main] Setup no completado. Accede al portal para configurar el hardware.")
         print(f"[Main] http://<ip-de-la-pi>:{config.get('portal', {}).get('puerto', 5000)}")
         print("[Main] Esperando en modo portal...")
+
+        # Mostrar pantalla de setup en e-ink: QR + "Escanea para configurar el WiFi"
+        try:
+            from modules.eink import PantallaEInk
+            from modules.netinfo import get_wifi_mode
+            cfg_eink = config.get('hardware', {}).get('eink', {})
+            pantalla_setup = PantallaEInk(cfg_eink)
+            # Esperar hasta 12 s a que NetworkManager levante el AP
+            for _ in range(6):
+                if get_wifi_mode() != 'none':
+                    break
+                time.sleep(2)
+            pantalla_setup.mostrar_bienvenida()
+        except Exception as e:
+            print(f"[Main] AVISO: no se pudo mostrar pantalla de setup en e-ink: {e}")
+
         signal.signal(signal.SIGINT,  cleanup)
         signal.signal(signal.SIGTERM, cleanup)
         while True:
