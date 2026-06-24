@@ -30,12 +30,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FIRMWARE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PAQUETE="storymaker_deploy.tar.gz"
 PROYECTO_REMOTO="/home/storymaker/proyecto"
+CAPTIVE_SRC="${SCRIPT_DIR}/sistema/storymaker-captive.py"
 
 echo "╔══════════════════════════════════════════╗"
 echo "║      StoryMaker — Deploy                 ║"
 echo "╠══════════════════════════════════════════╣"
 printf "║  Destino: %-33s║\n" "${DESTINO}"
 echo "╚══════════════════════════════════════════╝"
+echo ""
+
+# [0] Verificar que el captivo existe en local
+if [ ! -f "$CAPTIVE_SRC" ]; then
+    echo "ERROR: no se encuentra ${CAPTIVE_SRC}"
+    exit 1
+fi
 echo ""
 
 # [1] Empaquetar
@@ -67,8 +75,14 @@ rm -f /tmp/${PAQUETE}
 echo "      → Extraído en ${PROYECTO_REMOTO}"
 REMOTE
 
-# [4] Reiniciar servicio
-echo "[4/4] Reiniciando historias.service..."
+# [4] Desplegar portal cautivo
+echo "[4/5] Actualizando storymaker-captive.py..."
+scp "$CAPTIVE_SRC" "${DESTINO}:/tmp/storymaker-captive.py"
+ssh "$DESTINO" "sudo cp /tmp/storymaker-captive.py /usr/local/bin/storymaker-captive.py && sudo systemctl restart storymaker-captive.service"
+echo "      → Portal cautivo actualizado"
+
+# [5] Reiniciar servicio principal
+echo "[5/5] Reiniciando historias.service..."
 ssh "$DESTINO" "sudo systemctl restart historias.service"
 echo "      → Servicio reiniciado"
 
