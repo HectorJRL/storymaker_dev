@@ -10,3 +10,8 @@ venv/
 # Sistema
 .DS_Store
 Thumbs.db
+
+# Imágenes de release (van como Release asset, nunca dentro del repo)
+releases/*.img.xz
+*.img
+*.img.xz
