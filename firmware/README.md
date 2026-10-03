@@ -20,6 +20,7 @@ firmware/
 │   ├── audio.py         # Síntesis de voz edge-tts + reproducción mpg123
 │   ├── impresora.py     # Impresora térmica QR701 UART (ESC/POS)
 │   ├── generador.py     # Generador de premisas aleatorias desde perfiles .txt
+│   ├── importador.py    # Importación masiva de premisas desde .txt (limpieza + copias)
 │   ├── salidas.py       # Orquesta las salidas activas + animación e-ink
 │   ├── portal.py        # Portal web Flask (puerto 5000): configuración y generación
 │   ├── config_manager.py# Lectura/escritura atómica de config.json (thread-safe)
@@ -48,6 +49,30 @@ firmware/
 Cada perfil es una carpeta en `data/perfiles/<nombre>/` con tres archivos .txt,
 uno por línea: `detonantes.txt`, `protagonistas.txt`, `conflictos.txt`.
 El perfil activo se configura en `config.json` → `perfil_activo`.
+
+### Importar premisas en bloque
+
+Desde el portal, `⇪ Importar .txt` (barra lateral, o en la cabecera de cualquier
+lista de premisas) abre un asistente de tres pasos en `/importar`:
+
+1. **Destino** — un perfil existente, o uno nuevo que se crea en el momento
+   (con opción de dejarlo como perfil activo al terminar).
+2. **Modo** — *añadir al final* (por defecto) o *reemplazar la lista*. En un
+   perfil nuevo el paso no aplica.
+3. **Textos** — un `.txt` por categoría, o la lista pegada a mano. Si se
+   rellenan ambos para la misma categoría, se concatenan. Las categorías que se
+   dejan vacías no se modifican.
+
+Antes de escribir nada se muestra una **revisión**: cuántas frases entran, qué
+se descarta (repetidas, ya existentes, demasiado largas) y cómo queda cada
+categoría. Al confirmar se guarda un `<tipo>.txt.bak` por categoría tocada, de
+modo que el botón **Deshacer** devuelve las listas a su estado anterior
+(un solo nivel: la siguiente importación lo sustituye).
+
+Si el destino es el perfil activo, el `Generador` se recarga al confirmar, lo
+que reinicia el recuento de combinaciones de la sesión en curso.
+
+Límites: 3 MB por envío, 5000 frases por categoría, 300 caracteres por frase.
 
 ## Despliegue
 

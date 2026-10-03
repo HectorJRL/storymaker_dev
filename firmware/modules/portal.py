@@ -7,16 +7,20 @@ Rutas:
   /logout
   /setup        → configuración de hardware (primer arranque)
   /perfil/<n>/<tipo>  → ver/editar premisas
+  /importar     → importar premisas en bloque desde .txt (3 pasos)
   /api/*        → endpoints JSON
 Se lanza en un hilo separado (daemon) para no bloquear main.py.
 """
+import html
 import os
 import secrets
 import tempfile
 import threading
+import time
 from functools import wraps
 from flask import Flask, request, session, redirect, url_for, jsonify
 from modules.config_manager import cargar_config, guardar_config
+from modules import importador
 
 BASE_DIR     = os.path.join(os.path.dirname(__file__), '..')
 PERFILES_DIR = os.path.join(BASE_DIR, 'data', 'perfiles')
@@ -25,6 +29,10 @@ PIN_DEFAULT  = "1234"
 app = Flask(__name__)
 # Secret temporal hasta que Portal.__init__ cargue el valor persistente de config.json
 app.secret_key = secrets.token_hex(32)
+
+# Tope de subida para la importación de premisas. 3 MB son decenas de miles de
+# frases; el límite está para que un archivo enorme no agote la RAM de la Pi Zero.
+app.config['MAX_CONTENT_LENGTH'] = 3 * 1024 * 1024
 
 # Callback de generación registrado desde main.py
 _callback_generar = None
@@ -69,7 +77,7 @@ def guardar_premisas(perfil, tipo, premisas):
     fd, tmp = tempfile.mkstemp(dir=directorio, suffix='.tmp')
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(premisas))
+            f.write('\n'.join(premisas) + ('\n' if premisas else ''))
         os.replace(tmp, ruta)       # atómico en Linux
     except Exception:
         try:
@@ -311,20 +319,217 @@ def apagar():
 @login_requerido
 def nuevo_perfil():
     data   = request.get_json()
-    nombre = data.get('nombre', '').strip().lower().replace(' ', '_')
+    nombre = importador.slug_perfil(data.get('nombre', ''))
     if not nombre:
-        return jsonify({'ok': False, 'error': 'Nombre vacío'})
-    ruta = os.path.abspath(os.path.join(PERFILES_DIR, nombre))
-    # Guard de path traversal: la ruta resuelta debe estar dentro de PERFILES_DIR
-    perfiles_abs = os.path.abspath(PERFILES_DIR)
-    if not ruta.startswith(perfiles_abs + os.sep):
-        return jsonify({'ok': False, 'error': 'Nombre de perfil no válido'})
-    if os.path.exists(ruta):
+        return jsonify({'ok': False, 'error': 'Nombre no válido: usa letras o números'})
+    try:
+        # crear_perfil incluye el guard de path traversal y crea los tres .txt vacíos
+        importador.crear_perfil(PERFILES_DIR, nombre)
+    except FileExistsError:
         return jsonify({'ok': False, 'error': 'Ya existe ese perfil'})
-    os.makedirs(ruta)
-    for tipo in ['detonantes', 'protagonistas', 'conflictos']:
-        open(os.path.join(ruta, f'{tipo}.txt'), 'w').close()
+    except (ValueError, OSError) as e:
+        return jsonify({'ok': False, 'error': str(e)})
     return jsonify({'ok': True, 'perfil': nombre})
+
+# ------------------------------------------------------------------ #
+# Importación de premisas desde .txt                                  #
+# ------------------------------------------------------------------ #
+# El flujo tiene tres pantallas para que nadie sobrescriba nada sin verlo:
+#   1. /importar            → formulario (destino, modo, los tres textos)
+#   2. /importar/revisar    → resumen de lo que va a pasar (no escribe nada)
+#   3. /importar/confirmar  → aplica y ofrece deshacer
+# Entre el paso 2 y el 3 el análisis se guarda en memoria, atado a la sesión.
+_IMPORT_TTL   = 900          # segundos que vive una revisión sin confirmar
+_importaciones = {}
+_imp_lock      = threading.Lock()
+
+
+def _sid():
+    if 'sid' not in session:
+        session['sid'] = secrets.token_hex(8)
+    return session['sid']
+
+
+def _guardar_pendiente(datos):
+    token, ahora, sid = secrets.token_urlsafe(16), time.time(), _sid()
+    with _imp_lock:
+        caducados = [k for k, v in _importaciones.items()
+                     if ahora - v['ts'] > _IMPORT_TTL or v['sid'] == sid]
+        for k in caducados:
+            _importaciones.pop(k, None)
+        _importaciones[token] = {'ts': ahora, 'sid': sid, 'datos': datos}
+    return token
+
+
+def _recuperar_pendiente(token):
+    with _imp_lock:
+        p = _importaciones.get(token)
+        if not p or p['sid'] != _sid() or time.time() - p['ts'] > _IMPORT_TTL:
+            return None
+        return p['datos']
+
+
+def _descartar_pendiente(token):
+    with _imp_lock:
+        _importaciones.pop(token, None)
+
+
+@app.route('/importar')
+@login_requerido
+def importar():
+    config = cargar_config()
+    if not config.get('setup_completado', False):
+        return redirect(url_for('setup'))
+    activo  = config.get('perfil_activo', '')
+    destino = request.args.get('perfil') or activo
+    return _render_importar(get_perfiles(), activo, destino)
+
+
+@app.route('/importar/revisar', methods=['POST'])
+@login_requerido
+def importar_revisar():
+    config   = cargar_config()
+    perfiles = get_perfiles()
+    activo   = config.get('perfil_activo', '')
+    form     = request.form
+
+    modo = form.get('modo', 'anadir')
+    if modo not in ('anadir', 'reemplazar'):
+        modo = 'anadir'
+    activar = form.get('activar') == 'si'
+
+    error, perfil, nuevo = None, '', False
+    if form.get('destino') == 'nuevo':
+        slug = importador.slug_perfil(form.get('nombre_nuevo', ''))
+        if not slug:
+            error = ('Escribe un nombre para el perfil nuevo. Vale cualquier cosa con '
+                     'letras o números: «2 ESO», «Taller de verano»...')
+        elif slug in perfiles:
+            error = (f'Ya existe un perfil llamado «{slug.upper()}». Elige otro nombre, '
+                     'o importa sobre ese perfil desde la opción de arriba.')
+        else:
+            perfil, nuevo, modo = slug, True, 'anadir'
+    else:
+        perfil = form.get('perfil', '')
+        if perfil not in perfiles:
+            error = 'Elige un perfil de la lista de destino.'
+
+    entradas = {}
+    if not error:
+        for tipo in importador.TIPOS:
+            trozos = []
+            fichero = request.files.get(f'archivo_{tipo}')
+            if fichero and fichero.filename:
+                datos = fichero.read()
+                if datos:
+                    trozos.append(importador.decodificar(datos))
+            pegado = form.get(f'texto_{tipo}', '')
+            if pegado.strip():
+                trozos.append(pegado)
+            if trozos:
+                entradas[tipo] = '\n'.join(trozos)
+        if not entradas:
+            error = ('No has añadido ningún texto. Sube al menos un archivo .txt o pega '
+                     'una lista en alguna de las tres casillas.')
+
+    if error:
+        return _render_importar(perfiles, activo, perfil or form.get('perfil', ''),
+                                error=error, form=form)
+
+    try:
+        analisis = importador.analizar(PERFILES_DIR, perfil, entradas, modo, nuevo)
+    except ValueError as e:
+        return _render_importar(perfiles, activo, '', error=str(e), form=form)
+
+    if not analisis['hay_algo']:
+        return _render_importar(
+            perfiles, activo, perfil, form=form,
+            error=('Todas las frases que traes estaban ya en el perfil, así que no hay '
+                   'nada nuevo que guardar.'))
+
+    token = _guardar_pendiente({'perfil': perfil, 'nuevo': nuevo, 'modo': modo,
+                                'activar': activar, 'analisis': analisis})
+    return _render_revision(token, perfil, nuevo, modo, activar, analisis, activo)
+
+
+@app.route('/importar/confirmar', methods=['POST'])
+@login_requerido
+def importar_confirmar():
+    config   = cargar_config()
+    perfiles = get_perfiles()
+    activo   = config.get('perfil_activo', '')
+    token    = request.form.get('token', '')
+    pendiente = _recuperar_pendiente(token)
+    if not pendiente:
+        return _render_importar(
+            perfiles, activo, activo,
+            error=('La revisión ha caducado o se ha perdido. Vuelve a elegir los archivos; '
+                   'no se ha guardado ni modificado nada.'))
+
+    perfil, nuevo = pendiente['perfil'], pendiente['nuevo']
+    if nuevo and perfil in perfiles:
+        return _render_importar(
+            perfiles, activo, activo,
+            error=f'Mientras revisabas se creó un perfil llamado «{perfil.upper()}». Elige otro nombre.')
+    if not nuevo and perfil not in perfiles:
+        return _render_importar(perfiles, activo, activo,
+                                error='El perfil de destino ya no existe.')
+
+    try:
+        if nuevo:
+            importador.crear_perfil(PERFILES_DIR, perfil)
+        tocados = importador.aplicar(PERFILES_DIR, perfil, pendiente['analisis'])
+    except Exception as e:
+        return _render_mensaje('No se ha podido guardar',
+                               f'El dispositivo ha dado este error: {e}. '
+                               'No se ha modificado nada a medias: los archivos '
+                               'se escriben de golpe o no se escriben.', ok=False)
+
+    _descartar_pendiente(token)
+
+    activado = False
+    if nuevo and pendiente['activar']:
+        config['perfil_activo'] = perfil
+        guardar_config(config)
+        activado = True
+
+    recargado = False
+    if config.get('perfil_activo', '') == perfil and _callback_cambiar_perfil:
+        threading.Thread(target=_callback_cambiar_perfil,
+                         args=(perfil,), daemon=True).start()
+        recargado = True
+
+    return _render_resultado(perfil, tocados, recargado, activado, nuevo,
+                             pendiente['modo'],
+                             pendiente['analisis']['vacias'])
+
+
+@app.route('/importar/deshacer', methods=['POST'])
+@login_requerido
+def importar_deshacer():
+    resultado = importador.deshacer(PERFILES_DIR)
+    if not resultado['ok']:
+        return _render_mensaje('No se ha podido deshacer', resultado['error'], ok=False)
+    perfil = resultado['perfil']
+    config = cargar_config()
+    if config.get('perfil_activo', '') == perfil and _callback_cambiar_perfil:
+        threading.Thread(target=_callback_cambiar_perfil,
+                         args=(perfil,), daemon=True).start()
+    etiquetas = ', '.join(importador.LABELS[t].lower() for t in resultado['tipos'])
+    return _render_mensaje(
+        'Importación deshecha',
+        f'Las listas de {etiquetas} del perfil {perfil.upper()} han vuelto a estar '
+        'como antes de la importación.', perfil=perfil)
+
+
+@app.errorhandler(413)
+def _demasiado_grande(e):
+    return _render_mensaje(
+        'El archivo es demasiado grande',
+        'El dispositivo acepta hasta 3 MB por envío, que son muchísimas frases. '
+        'Divide la lista en dos archivos e impórtalos uno detrás de otro.',
+        ok=False), 413
+
 
 # ------------------------------------------------------------------ #
 # CSS compartido                                                      #
@@ -785,7 +990,10 @@ def _render_pagina(perfiles, perfil_activo, perfil_sel, tipo_sel, config, premis
 <div class="premisas-card">
   <div class="premisas-header">
     <h2 class="premisas-title serif">{LABELS[tipo_sel]}<span class="muted" style="font-weight:400;font-size:.9em"> · {perfil_sel.upper()}</span></h2>
-    <span class="premisas-total">{len(premisas)} premisas</span>
+    <div class="premisas-head-right">
+      <a class="imp-link" href="/importar?perfil={perfil_sel}">&#8681; Importar .txt</a>
+      <span class="premisas-total">{len(premisas)} premisas</span>
+    </div>
   </div>
   <ul class="premisas-lista">{items}</ul>
   <div class="anadir-area">
@@ -847,6 +1055,8 @@ async function borrar(i) {{
     <button class="nuevo-perfil-crear" onclick="crearPerfil()">Crear</button>
     <span class="fb" id="fb-perfil"></span>
   </div>
+  <a href="/importar" class="nuevo-perfil-btn"
+     style="display:block; text-align:center; margin-top:.5rem;">&#8681; Importar .txt</a>
 </div>
 <script>
 function toggleNuevo() {
@@ -985,6 +1195,13 @@ body { display: flex; flex-direction: column; }
   background: var(--paper2); border: 1px solid var(--border);
   padding: .2rem .6rem;
 }
+.premisas-head-right { display: flex; align-items: center; gap: .6rem; }
+.imp-link {
+  font-size: .75rem; color: var(--ink2); white-space: nowrap;
+  border: 1px solid var(--border2); padding: .25rem .6rem;
+  transition: color .12s, border-color .12s;
+}
+.imp-link:hover { color: var(--accent); border-color: var(--accent); }
 .premisas-lista { list-style: none; max-height: 340px; overflow-y: auto; }
 .premisa-item {
   display: flex; align-items: baseline; gap: .7rem;
@@ -1210,6 +1427,477 @@ async function confirmarApagado() {{
 {vol_script}"""
 
     return _page_wrap("Panel", body, css)
+
+# ------------------------------------------------------------------ #
+# Pantallas de importación                                            #
+# ------------------------------------------------------------------ #
+PISTAS = {
+    'detonantes': ('Cómo o cuándo arranca la historia. Normalmente termina en coma.',
+                   'Después de ganar la lotería,'),
+    'protagonistas': ('Quién la protagoniza. Sin punto al final.',
+                      'una adolescente descarada'),
+    'conflictos': ('Qué le ocurre. Es lo que cierra la frase.',
+                   'ingresa en una milicia.'),
+}
+
+CSS_IMPORTAR = """
+.imp-header {
+  background: var(--ink); color: var(--white); padding: .85rem 1.25rem;
+  display: flex; align-items: center; justify-content: space-between; gap: .6rem;
+  border-bottom: 3px solid var(--accent);
+}
+.imp-logo { font-family: var(--serif); font-size: 1.15rem; }
+.imp-logo em { color: var(--accent2); font-style: italic; }
+.imp-volver { font-size: .78rem; color: #d8cfbe; border: 1px solid #4a4030; padding: .35rem .7rem; }
+.imp-volver:hover { color: #fff; border-color: var(--accent2); }
+.imp-wrap { max-width: 860px; margin: 0 auto; padding: 1.75rem 1.25rem 3rem; }
+.imp-titulo { font-family: var(--serif); font-size: 1.6rem; font-weight: 600; margin-bottom: .35rem; }
+.imp-sub { color: var(--ink2); font-size: .92rem; line-height: 1.55; margin-bottom: 1.5rem; }
+.imp-ayuda {
+  background: var(--paper2); border: 1px solid var(--border);
+  border-left: 3px solid var(--accent); padding: 1rem 1.1rem;
+  margin-bottom: 1.75rem; font-size: .88rem; line-height: 1.6; color: var(--ink2);
+}
+.imp-ayuda strong { color: var(--ink); }
+.imp-ayuda ol { margin: .6rem 0 0 1.1rem; }
+.imp-ayuda li { margin-bottom: .3rem; }
+.imp-ejemplo {
+  font-family: var(--serif); font-style: italic; color: var(--ink);
+  background: var(--white); border: 1px solid var(--border);
+  padding: .6rem .8rem; margin: .7rem 0;
+}
+.imp-ejemplo b { font-style: normal; font-weight: 600; color: var(--accent); }
+.imp-paso { background: var(--white); border: 1.5px solid var(--border); margin-bottom: 1.25rem; }
+.imp-paso-cab {
+  padding: .8rem 1.1rem; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: .6rem;
+}
+.imp-paso-num {
+  width: 22px; height: 22px; background: var(--ink); color: #fff; font-size: .72rem;
+  display: flex; align-items: center; justify-content: center; flex: 0 0 auto;
+}
+.imp-paso-tit { font-size: .95rem; font-weight: 600; }
+.imp-paso-cuerpo { padding: 1.1rem; }
+.imp-opcion { display: flex; gap: .7rem; align-items: flex-start; padding: .55rem; cursor: pointer; }
+.imp-opcion:hover { background: var(--paper); }
+.imp-opcion input[type=radio] { margin-top: .25rem; flex: 0 0 auto; }
+.imp-opcion-txt { flex: 1; }
+.imp-opcion-txt strong { display: block; font-size: .9rem; font-weight: 500; margin-bottom: .15rem; }
+.imp-opcion-txt span { font-size: .8rem; color: var(--ink2); line-height: 1.45; display: block; }
+.imp-campo {
+  padding: .55rem .7rem; border: 1.5px solid var(--border); background: var(--paper);
+  color: var(--ink); font-size: .9rem; outline: none; width: 100%; max-width: 330px;
+  margin-top: .45rem;
+}
+.imp-campo:focus { border-color: var(--accent); }
+.imp-check { font-size: .82rem; color: var(--ink2); margin-top: .55rem; display: block; }
+.imp-desactivado { opacity: .45; }
+.imp-cat { border: 1.5px solid var(--border); background: var(--white); margin-bottom: 1rem; }
+.imp-cat-cab {
+  display: flex; align-items: center; gap: .5rem; padding: .7rem 1rem;
+  background: var(--paper2); border-bottom: 1px solid var(--border);
+}
+.imp-cat-nom { font-size: .85rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+.imp-cat-cuerpo { padding: 1rem; }
+.imp-cat-pista { font-size: .82rem; color: var(--ink2); margin-bottom: .85rem; line-height: 1.5; }
+.imp-cat-pista i { font-family: var(--serif); color: var(--ink); }
+.imp-o { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: #a8a08f; margin: .8rem 0 .45rem; }
+.imp-cat textarea {
+  width: 100%; min-height: 86px; padding: .6rem .7rem; border: 1.5px solid var(--border);
+  background: var(--paper); color: var(--ink); font-size: .88rem; line-height: 1.5;
+  outline: none; resize: vertical;
+}
+.imp-cat textarea:focus { border-color: var(--accent); }
+.imp-acciones { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; margin-top: 1.5rem; }
+.imp-btn {
+  padding: .75rem 1.5rem; background: var(--ink); color: #fff; border: none;
+  font-size: .85rem; font-weight: 500; text-transform: uppercase; letter-spacing: .06em;
+  cursor: pointer; transition: background .12s;
+}
+.imp-btn:hover { background: var(--accent); }
+.imp-btn-rojo { background: var(--err); }
+.imp-btn-rojo:hover { background: #a82323; }
+.imp-btn2 {
+  padding: .72rem 1.25rem; border: 1.5px solid var(--border2); background: none;
+  color: var(--ink2); font-size: .85rem; cursor: pointer; display: inline-block;
+}
+.imp-btn2:hover { color: var(--accent); border-color: var(--accent); }
+.imp-error, .imp-aviso, .imp-ok {
+  padding: .9rem 1.1rem; font-size: .88rem; line-height: 1.55;
+  margin-bottom: 1.25rem; border: 1px solid;
+}
+.imp-error { background: var(--err-bg); border-color: #e0bcbc; color: var(--err); }
+.imp-aviso { background: #fdf6e3; border-color: #e8d9a8; color: #7a5c10; }
+.imp-ok    { background: var(--ok-bg); border-color: #b8d9c2; color: var(--ok); }
+.imp-error strong, .imp-aviso strong, .imp-ok strong { display: block; margin-bottom: .2rem; }
+.imp-tabla {
+  width: 100%; border-collapse: collapse; font-size: .88rem;
+  background: var(--white); border: 1.5px solid var(--border);
+}
+.imp-tabla th {
+  text-align: left; font-size: .7rem; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--ink2); background: var(--paper2); padding: .6rem .8rem;
+  border-bottom: 1px solid var(--border);
+}
+.imp-tabla td { padding: .65rem .8rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+.imp-tabla tr:last-child td { border-bottom: none; }
+.imp-cifra { font-variant-numeric: tabular-nums; }
+.imp-mas { color: var(--ok); font-weight: 600; }
+.imp-menos { color: var(--err); font-weight: 600; }
+.imp-nota { display: block; font-size: .77rem; color: var(--ink2); margin-top: .25rem; line-height: 1.45; }
+.imp-intacta { color: #a8a08f; }
+.imp-muestra { background: var(--white); border: 1.5px solid var(--border); padding: 1rem 1.1rem; margin-top: 1.25rem; }
+.imp-muestra h3 {
+  font-size: .75rem; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--ink2); margin-bottom: .7rem; font-weight: 500;
+}
+.imp-muestra-cat { font-size: .72rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--accent); display: block; margin: .6rem 0 .3rem; }
+.imp-muestra ul { list-style: none; }
+.imp-muestra li {
+  font-family: var(--serif); font-size: .92rem; padding: .18rem 0 .18rem .9rem;
+  border-left: 2px solid var(--border2); margin-bottom: .12rem;
+}
+.imp-resumen { list-style: none; margin: .4rem 0 0; }
+.imp-resumen li { font-size: .9rem; padding: .2rem 0; }
+@media (max-width: 640px) {
+  .imp-wrap { padding: 1.1rem .9rem 2.5rem; }
+  .imp-titulo { font-size: 1.3rem; }
+  .imp-tabla th:nth-child(2), .imp-tabla td:nth-child(2) { display: none; }
+}
+"""
+
+
+def _imp_cabecera():
+    return ('<header class="imp-header">'
+            '<div class="imp-logo">Story<em>Maker</em></div>'
+            '<a href="/" class="imp-volver">← Volver al panel</a>'
+            '</header>')
+
+
+def _render_importar(perfiles, perfil_activo, perfil_pre, error=None, form=None):
+    form     = form or {}
+    destino  = form.get('destino', 'existente')
+    es_nuevo = destino == 'nuevo'
+    modo     = form.get('modo', 'anadir')
+    nombre_nuevo = html.escape(form.get('nombre_nuevo', ''))
+    activar_chk  = ' checked' if form.get('activar') == 'si' else ''
+
+    error_html = f'<div class="imp-error"><strong>Revisa esto</strong>{html.escape(error)}</div>' if error else ''
+
+    opciones = ''
+    for p in perfiles:
+        sel = ' selected' if p == perfil_pre else ''
+        marca = ' — perfil activo' if p == perfil_activo else ''
+        opciones += f'<option value="{html.escape(p)}"{sel}>{html.escape(p.upper())}{marca}</option>'
+    if not opciones:
+        opciones = '<option value="">(todavía no hay perfiles)</option>'
+
+    r_exist = '' if es_nuevo else ' checked'
+    r_nuevo = ' checked' if es_nuevo else ''
+
+    cats = ''
+    for tipo in importador.TIPOS:
+        pista, ejemplo = PISTAS[tipo]
+        valor = html.escape(form.get(f'texto_{tipo}', ''))
+        cats += f'''
+<div class="imp-cat">
+  <div class="imp-cat-cab">{ICONOS_SVG[tipo]}<span class="imp-cat-nom">{LABELS[tipo]}</span></div>
+  <div class="imp-cat-cuerpo">
+    <p class="imp-cat-pista">{pista}<br>Ejemplo de línea: <i>{html.escape(ejemplo)}</i></p>
+    <label class="imp-o" for="archivo_{tipo}">Archivo .txt</label>
+    <input type="file" id="archivo_{tipo}" name="archivo_{tipo}" accept=".txt,text/plain">
+    <p class="imp-o">o pega aquí la lista, una frase por línea</p>
+    <textarea name="texto_{tipo}" placeholder="Una frase por línea...">{valor}</textarea>
+  </div>
+</div>'''
+
+    body = f'''
+{_imp_cabecera()}
+<div class="imp-wrap">
+  <h1 class="imp-titulo serif">Importar premisas desde archivos de texto</h1>
+  <p class="imp-sub">Trae las frases de golpe desde tus propios archivos, en lugar de
+  escribirlas una a una.</p>
+
+  {error_html}
+
+  <div class="imp-ayuda">
+    <strong>Cómo funciona</strong>
+    Cada historia que genera la máquina se arma con tres piezas:
+    <div class="imp-ejemplo"><b>Después de ganar la lotería,</b> una adolescente descarada ingresa en una milicia.</div>
+    <ol>
+      <li>Abre el Bloc de notas (o TextEdit) y escribe <strong>una frase por línea</strong>.</li>
+      <li>Guarda el archivo como <strong>.txt</strong>. Un archivo por cada pieza.</li>
+      <li>Súbelos abajo. No hace falta traer las tres: puedes importar sólo una.</li>
+    </ol>
+    Si prefieres, copia la lista y pégala directamente en la casilla de texto.
+  </div>
+
+  <form method="POST" action="/importar/revisar" enctype="multipart/form-data">
+
+    <div class="imp-paso">
+      <div class="imp-paso-cab"><span class="imp-paso-num">1</span>
+        <span class="imp-paso-tit">¿Dónde quieres guardarlas?</span></div>
+      <div class="imp-paso-cuerpo">
+        <label class="imp-opcion">
+          <input type="radio" name="destino" value="existente"{r_exist} onchange="impDestino()">
+          <span class="imp-opcion-txt"><strong>En un perfil que ya existe</strong>
+            <span>Las frases se suman a las que ya tiene ese perfil.</span>
+            <select class="imp-campo" id="imp-perfil" name="perfil">{opciones}</select>
+          </span>
+        </label>
+        <label class="imp-opcion">
+          <input type="radio" name="destino" value="nuevo"{r_nuevo} onchange="impDestino()">
+          <span class="imp-opcion-txt"><strong>Crear un perfil nuevo</strong>
+            <span>Se crea vacío y se llena con lo que subas ahora.</span>
+            <input type="text" class="imp-campo" id="imp-nombre" name="nombre_nuevo"
+                   value="{nombre_nuevo}" placeholder="ej: 2 ESO, Taller de verano..." maxlength="40">
+            <label class="imp-check"><input type="checkbox" id="imp-activar" name="activar"
+                   value="si"{activar_chk}> Usarlo como perfil activo al terminar</label>
+          </span>
+        </label>
+      </div>
+    </div>
+
+    <div class="imp-paso" id="imp-modo-bloque">
+      <div class="imp-paso-cab"><span class="imp-paso-num">2</span>
+        <span class="imp-paso-tit">¿Qué hacemos con lo que ya hay?</span></div>
+      <div class="imp-paso-cuerpo">
+        <label class="imp-opcion">
+          <input type="radio" name="modo" value="anadir"{'' if modo == 'reemplazar' else ' checked'}>
+          <span class="imp-opcion-txt"><strong>Añadir al final</strong>
+            <span>Se conserva todo lo que había y las frases nuevas se colocan detrás.
+            Las que ya estuvieran no se duplican.</span></span>
+        </label>
+        <label class="imp-opcion">
+          <input type="radio" name="modo" value="reemplazar"{' checked' if modo == 'reemplazar' else ''}>
+          <span class="imp-opcion-txt"><strong>Reemplazar la lista</strong>
+            <span>Se borra lo que había y queda sólo lo que subes ahora. Se guarda una
+            copia de seguridad y podrás deshacerlo justo después.</span></span>
+        </label>
+        <p class="imp-nota" id="imp-modo-nota" style="display:none">
+          Un perfil nuevo empieza vacío, así que este paso no se aplica.</p>
+      </div>
+    </div>
+
+    <div class="imp-paso">
+      <div class="imp-paso-cab"><span class="imp-paso-num">3</span>
+        <span class="imp-paso-tit">Los textos</span></div>
+      <div class="imp-paso-cuerpo">{cats}
+        <p class="imp-nota">Las categorías que dejes vacías no se modifican.</p>
+      </div>
+    </div>
+
+    <div class="imp-acciones">
+      <button type="submit" class="imp-btn">Revisar antes de guardar</button>
+      <a href="/" class="imp-btn2">Cancelar</a>
+    </div>
+  </form>
+</div>
+<script>
+function impDestino() {{
+  var nuevo = document.querySelector('input[name=destino][value=nuevo]').checked;
+  document.getElementById('imp-perfil').disabled  = nuevo;
+  document.getElementById('imp-nombre').disabled  = !nuevo;
+  document.getElementById('imp-activar').disabled = !nuevo;
+  var b = document.getElementById('imp-modo-bloque');
+  b.className = nuevo ? 'imp-paso imp-desactivado' : 'imp-paso';
+  b.querySelectorAll('input[name=modo]').forEach(function(r) {{ r.disabled = nuevo; }});
+  document.getElementById('imp-modo-nota').style.display = nuevo ? 'block' : 'none';
+}}
+impDestino();
+</script>'''
+    return _page_wrap("Importar premisas", body, CSS_IMPORTAR)
+
+
+def _render_revision(token, perfil, nuevo, modo, activar, analisis, perfil_activo):
+    detalle  = analisis['detalle']
+    reemplaza = modo == 'reemplazar'
+    p_esc = html.escape(perfil.upper())
+
+    destino_txt = (f'perfil nuevo <strong>{p_esc}</strong>' if nuevo
+                   else f'perfil <strong>{p_esc}</strong>')
+    if not nuevo and perfil == perfil_activo:
+        destino_txt += ' (el que está en uso ahora mismo)'
+    modo_txt = ('Se reemplaza la lista de cada categoría que traes'
+                if reemplaza else 'Se añaden al final de lo que ya hay')
+    if nuevo:
+        modo_txt = 'El perfil se crea vacío y se llena con estas frases'
+
+    filas = ''
+    for tipo in importador.TIPOS:
+        d = detalle.get(tipo)
+        if not d:
+            n = analisis['finales'][tipo]
+            filas += (f'<tr><td>{LABELS[tipo]}</td>'
+                      f'<td class="imp-cifra imp-intacta">{n}</td>'
+                      f'<td class="imp-intacta">No has traído nada'
+                      f'<span class="imp-nota">Esta lista se queda como está.</span></td>'
+                      f'<td class="imp-cifra imp-intacta">{n}</td></tr>')
+            continue
+        notas = []
+        if d['repetidas']:
+            notas.append(f"{d['repetidas']} línea(s) repetida(s) dentro del archivo")
+        if d['ya_estaban']:
+            notas.append(f"{d['ya_estaban']} ya estaba(n) en el perfil")
+        if d['largas']:
+            notas.append(f"{d['largas']} línea(s) demasiado larga(s), descartada(s)")
+        if d['truncado']:
+            notas.append(f"sólo se admiten {importador.MAX_LINEAS} por categoría: el resto se ha cortado")
+        nota_html = f'<span class="imp-nota">{html.escape(" · ".join(notas))}</span>' if notas else ''
+
+        if reemplaza and d['eliminadas']:
+            cambio = (f'<span class="imp-menos">−{d["eliminadas"]}</span> / '
+                      f'<span class="imp-mas">+{len(d["nuevas"])}</span>')
+        else:
+            cambio = f'<span class="imp-mas">+{len(d["nuevas"])}</span>'
+
+        filas += (f'<tr><td>{LABELS[tipo]}</td>'
+                  f'<td class="imp-cifra">{d["actuales"]}</td>'
+                  f'<td>{cambio}{nota_html}</td>'
+                  f'<td class="imp-cifra"><strong>{d["resultantes"]}</strong></td></tr>')
+
+    muestra = ''
+    for tipo in importador.TIPOS:
+        d = detalle.get(tipo)
+        if not d or not d['muestra']:
+            continue
+        items = ''.join(f'<li>{html.escape(l)}</li>' for l in d['muestra'])
+        resto = len(d['nuevas']) - len(d['muestra'])
+        extra = f'<li class="imp-intacta">… y {resto} más</li>' if resto > 0 else ''
+        muestra += (f'<span class="imp-muestra-cat">{LABELS[tipo]}</span>'
+                    f'<ul>{items}{extra}</ul>')
+    if muestra:
+        muestra = (f'<div class="imp-muestra"><h3>Así se van a guardar las primeras</h3>'
+                   f'{muestra}</div>')
+
+    avisos = ''
+    if reemplaza:
+        total_borradas = sum(d['eliminadas'] for d in detalle.values())
+        if total_borradas:
+            cats = ', '.join(LABELS[t].lower() for t, d in detalle.items() if d['eliminadas'])
+            avisos += (f'<div class="imp-error"><strong>Vas a borrar {total_borradas} '
+                       f'premisa(s)</strong>Se sustituyen las listas de {cats}. '
+                       'Se guardará una copia de seguridad: en la pantalla siguiente '
+                       'tendrás un botón para deshacerlo.</div>')
+    if (not nuevo and perfil == perfil_activo) or (nuevo and activar):
+        avisos += ('<div class="imp-aviso"><strong>Las frases nuevas entran en juego al guardar</strong>'
+                   'Este es el perfil que usa la máquina, así que recargará las listas. '
+                   'Eso vuelve a poner el contador a cero: alguna combinación que ya haya '
+                   'salido en esta sesión podría repetirse.</div>')
+    if analisis['vacias']:
+        faltan = ', '.join(LABELS[t].lower() for t in analisis['vacias'])
+        avisos += (f'<div class="imp-aviso"><strong>Faltará contenido en: {faltan}</strong>'
+                   'La máquina necesita al menos una frase en cada una de las tres '
+                   'categorías para poder montar una historia. Puedes guardar ahora y '
+                   'traer el resto en otra importación: el perfil no funcionará hasta '
+                   'que las tres tengan algo.</div>')
+    if nuevo and not activar:
+        avisos += ('<div class="imp-aviso"><strong>El perfil quedará creado, pero no activo</strong>'
+                   'Para usarlo, elígelo en «Perfil activo», arriba en el panel.</div>')
+
+    boton = ('<button type="submit" class="imp-btn imp-btn-rojo">Sí, reemplazar y guardar</button>'
+             if reemplaza and any(d['eliminadas'] for d in detalle.values())
+             else '<button type="submit" class="imp-btn">Guardar</button>')
+
+    body = f'''
+{_imp_cabecera()}
+<div class="imp-wrap">
+  <h1 class="imp-titulo serif">Revisa antes de guardar</h1>
+  <p class="imp-sub">Todavía no se ha modificado nada. Esto es lo que pasaría:<br>
+  Destino: {destino_txt} · {modo_txt}.</p>
+
+  {avisos}
+
+  <table class="imp-tabla">
+    <tr><th>Categoría</th><th>Tiene ahora</th><th>Cambio</th><th>Se quedará con</th></tr>
+    {filas}
+  </table>
+
+  {muestra}
+
+  <form method="POST" action="/importar/confirmar">
+    <input type="hidden" name="token" value="{html.escape(token)}">
+    <div class="imp-acciones">
+      {boton}
+      <a href="/importar" class="imp-btn2">Volver y cambiar algo</a>
+    </div>
+  </form>
+</div>'''
+    return _page_wrap("Revisar importación", body, CSS_IMPORTAR)
+
+
+def _render_resultado(perfil, tocados, recargado, activado, nuevo, modo, vacias=()):
+    p_esc = html.escape(perfil.upper())
+    lineas = ''
+    for tipo, t in tocados.items():
+        if t['eliminadas']:
+            lineas += (f'<li><strong>{LABELS[tipo]}</strong>: lista reemplazada — '
+                       f'{t["eliminadas"]} fuera, {t["anadidas"]} dentro '
+                       f'({t["total"]} en total).</li>')
+        else:
+            lineas += (f'<li><strong>{LABELS[tipo]}</strong>: {t["anadidas"]} añadida(s) '
+                       f'({t["total"]} en total).</li>')
+    if not lineas:
+        lineas = '<li>No había nada nuevo que guardar.</li>'
+
+    pendiente = ''
+    if vacias:
+        faltan = ', '.join(LABELS[t].lower() for t in vacias)
+        pendiente = (f'<div class="imp-aviso"><strong>Te falta: {faltan}</strong>'
+                     f'El perfil {p_esc} todavía no puede generar historias: hacen falta '
+                     'frases en las tres categorías. Vuelve a importar para completarlo.</div>')
+
+    extras = ''
+    if nuevo:
+        extras += f'<p class="imp-nota">Perfil {p_esc} creado.</p>'
+    if activado:
+        extras += f'<p class="imp-nota">{p_esc} es ahora el perfil activo.</p>'
+    if recargado:
+        extras += ('<p class="imp-nota">La máquina ya ha recargado las listas: '
+                   'las frases nuevas pueden salir en la siguiente historia.</p>')
+
+    primer_tipo = next(iter(tocados), 'detonantes')
+    body = f'''
+{_imp_cabecera()}
+<div class="imp-wrap">
+  <h1 class="imp-titulo serif">Importación terminada</h1>
+  <div class="imp-ok"><strong>Guardado en {p_esc}</strong>
+    <ul class="imp-resumen">{lineas}</ul>
+  </div>
+  {pendiente}
+  {extras}
+  <div class="imp-acciones">
+    <a href="/perfil/{html.escape(perfil)}/{primer_tipo}" class="imp-btn">Ver las premisas</a>
+    <a href="/importar?perfil={html.escape(perfil)}" class="imp-btn2">Importar más</a>
+    <a href="/" class="imp-btn2">Volver al panel</a>
+  </div>
+  <form method="POST" action="/importar/deshacer" style="margin-top:1.75rem"
+        onsubmit="return confirm('¿Deshacer la importación y dejar las listas como estaban?')">
+    <button type="submit" class="imp-btn2">↶ Deshacer esta importación</button>
+    <p class="imp-nota">Disponible mientras no hagas otra importación.</p>
+  </form>
+</div>'''
+    return _page_wrap("Importación terminada", body, CSS_IMPORTAR)
+
+
+def _render_mensaje(titulo, texto, ok=True, perfil=None):
+    clase = 'imp-ok' if ok else 'imp-error'
+    ver = (f'<a href="/perfil/{html.escape(perfil)}/detonantes" class="imp-btn2">Ver las premisas</a>'
+           if perfil else '')
+    body = f'''
+{_imp_cabecera()}
+<div class="imp-wrap">
+  <h1 class="imp-titulo serif">{html.escape(titulo)}</h1>
+  <div class="{clase}">{html.escape(texto)}</div>
+  <div class="imp-acciones">
+    <a href="/" class="imp-btn">Volver al panel</a>
+    <a href="/importar" class="imp-btn2">Importar premisas</a>
+    {ver}
+  </div>
+</div>'''
+    return _page_wrap(titulo, body, CSS_IMPORTAR)
+
 
 # ------------------------------------------------------------------ #
 # Clase Portal (lanzada desde main.py)                                #

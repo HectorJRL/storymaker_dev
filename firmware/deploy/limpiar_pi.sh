@@ -60,6 +60,10 @@ else
     echo "      → config.json no encontrado (omitido)"
 fi
 
+# Copias de seguridad que deja el importador de premisas del portal: no tienen
+# por qué viajar en una imagen distribuible.
+sudo find "/home/storymaker/proyecto/data/perfiles" -name '*.txt.bak' -delete 2>/dev/null || true
+
 # ── [3] Claves SSH autorizadas del usuario ───────────────────────────
 echo "[3/6] Borrando authorized_keys de storymaker..."
 > /home/storymaker/.ssh/authorized_keys 2>/dev/null \
