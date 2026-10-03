@@ -7,11 +7,27 @@ que se generó aquí.
 
 ## Dónde descargar la imagen
 
-Sección **Releases** del repositorio → versión `vYYYY-MM-DD` → fichero `storymaker-YYYY-MM-DD.img.xz`.
+**Codeberg es el único sitio de descarga.** Sección **Releases** del repositorio →
+versión `vYYYY-MM-DD` → fichero `storymaker-YYYY-MM-DD.img.xz`.
 
-> El repositorio se replica a `github.com/HectorJRL/storymaker_dev`, pero **los push-mirrors de
-> Codeberg copian refs de git, no adjuntos de release**. El tag llega al espejo; la imagen no. Si
-> quieres la imagen respaldada en dos sitios, hay que subirla al espejo aparte.
+`github.com/HectorJRL/storymaker_dev` es **espejo del código, no de las descargas**: los
+push-mirrors de Codeberg replican refs de git, y la imagen nunca está en git (la ignora
+`.gitignore`). Al espejo llegan los commits y los tags; el `.img.xz` no, porque no hay nada que
+copiar.
+
+Decidido así a propósito, y no por dejadez:
+
+- No protege de nada que no esté ya cubierto. El código y la historia completa, tags incluidos, sí
+  están en el espejo, y de un tag GitHub genera por su cuenta los `zip`/`tar.gz` del fuente. La
+  receta para reconstruir cualquier imagen está duplicada; de la imagen en sí hay dos copias
+  (Codeberg y el disco de desarrollo).
+- Subir el adjunto al espejo sería un paso manual que nada obliga a repetir, así que se olvidaría
+  en alguna release y quedarían unas versiones con descarga allí y otras sin ella: peor que
+  ninguna, porque quien busque no sabrá si falta o si nunca se publicó.
+- Dos sitios de descarga invitan a bajarse el viejo. El 2026-10-03 hubo que retirar una imagen
+  defectuosa pocas horas después de publicarla; con una sola ubicación, retirarla basta.
+
+Si Codeberg fallara: con el tag y el proceso descrito más abajo, la imagen se reconstruye.
 
 ## Credenciales de fábrica
 
@@ -107,5 +123,10 @@ Y confirma que ha llegado, en lugar de suponerlo:
 curl -s https://api.github.com/repos/HectorJRL/storymaker_dev/commits/main | grep '"sha"'
 ```
 
-Recuerda que el adjunto no se replica: si lo quieres también en GitHub, súbelo a mano en su pestaña
-Releases o con un token propio.
+Al espejo llegan commits y tags, no los adjuntos. No hace falta hacer nada con ellos allí: ver
+«Dónde descargar la imagen» arriba.
+
+Si se retira una release ya publicada —por ejemplo porque la imagen salió con un fallo—,
+`tea release delete -y --delete-tag <tag>` borra release y tag de una vez, y el espejo recoge la
+desaparición del tag en la siguiente sincronización. Conviene comprobar antes las descargas del
+adjunto (`tea api --login codeberg "repos/.../releases"`) para saber a cuánta gente afecta.
