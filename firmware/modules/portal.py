@@ -1406,64 +1406,78 @@ body { display: flex; flex-direction: column; }
   .tab { padding: .45rem .7rem; font-size: .78rem; }
 }
 """
-    vol_script = f"""
-<script>
+    # Funciones del panel.
+    #
+    # OJO: sólo las del volumen dependen de que haya audio. Las demás tienen que
+    # existir SIEMPRE. Hasta ahora todo el bloque iba condicionado a audio_activo
+    # y la rama alternativa definía únicamente cambiarPerfil, así que en un
+    # dispositivo sin audio —por ejemplo uno con sólo impresora térmica— el botón
+    # GENERAR y el de apagar llamaban a funciones inexistentes y no hacían nada.
+    #
+    # Se escriben como cadenas normales, no f-strings: no interpolan ningún valor
+    # de Python y así no hay que duplicar las llaves de JavaScript, que es
+    # justamente lo que hacía incómodo tocar este bloque.
+    vol_funcs = """
 var _volTimer = null;
-function debounceVol(v) {{
+function debounceVol(v) {
   document.getElementById('vol-display').textContent = Math.round(v) + '%';
   clearTimeout(_volTimer);
   _volTimer = setTimeout(() => setVol(v), 400);
-}}
-async function setVol(v) {{
-  await fetch('/api/guardar_volumen', {{
-    method:'POST', headers:{{'Content-Type':'application/json'}},
-    body: JSON.stringify({{volumen: parseInt(v)}})
-  }});
-}}
-async function generarPremisa() {{
+}
+async function setVol(v) {
+  await fetch('/api/guardar_volumen', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({volumen: parseInt(v)})
+  });
+}
+""" if audio_activo else ""
+
+    panel_script = "<script>" + vol_funcs + """
+async function generarPremisa() {
   const btn = document.getElementById('generar-btn');
   const fb  = document.getElementById('generar-fb');
   btn.disabled = true;
   fb.textContent = 'Generando...';
-  try {{
-    const r = await fetch('/api/generar', {{method:'POST',
-      headers:{{'Content-Type':'application/json'}}, body:'{{}}'}});
+  try {
+    const r = await fetch('/api/generar', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body:'{}'});
     const d = await r.json();
-    if (d.ok) {{
+    if (d.ok) {
       fb.textContent = 'Premisa enviada a las salidas activas.';
-    }} else {{
+    } else {
       fb.textContent = d.error || 'Error al generar.';
-    }}
-  }} catch(e) {{
+    }
+  } catch(e) {
     fb.textContent = 'Error de conexión.';
-  }}
-  setTimeout(() => {{
+  }
+  setTimeout(() => {
     btn.disabled = false;
     fb.textContent = '';
-  }}, 3000);
-}}
-async function cambiarPerfil(p) {{
-  const r = await fetch('/api/cambiar_perfil', {{
-    method:'POST', headers:{{'Content-Type':'application/json'}},
-    body: JSON.stringify({{perfil: p}})
-  }});
+  }, 3000);
+}
+async function cambiarPerfil(p) {
+  const r = await fetch('/api/cambiar_perfil', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({perfil: p})
+  });
   const d = await r.json();
-  if (d.ok) {{
+  if (d.ok) {
     const sel = document.getElementById('perfil-sel');
-    sel.style.outline = '2px solid #9be6a8';
-    setTimeout(() => sel.style.outline = '', 1400);
-  }}
-}}
-async function confirmarApagado() {{
+    if (sel) {
+      sel.style.outline = '2px solid #9be6a8';
+      setTimeout(() => sel.style.outline = '', 1400);
+    }
+  }
+}
+async function confirmarApagado() {
   if (!confirm('¿Apagar el dispositivo?')) return;
   const btn = document.querySelector('.hlink-apagar');
   btn.disabled = true;
   btn.textContent = 'Apagando...';
-  await fetch('/api/apagar', {{method:'POST',
-    headers:{{'Content-Type':'application/json'}}, body:'{{}}'}});
-}}
-</script>
-""" if audio_activo else "<script>async function cambiarPerfil(p){const r=await fetch('/api/cambiar_perfil',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({perfil:p})});}</script>"
+  await fetch('/api/apagar', {method:'POST',
+    headers:{'Content-Type':'application/json'}, body:'{}'});
+}
+</script>"""
 
     vol_control = f'''
 <div class="vol-inline">
@@ -1518,7 +1532,7 @@ async function confirmarApagado() {{
     {contenido}
   </div>
 </div>
-{vol_script}"""
+{panel_script}"""
 
     return _page_wrap("Panel", body, css)
 
