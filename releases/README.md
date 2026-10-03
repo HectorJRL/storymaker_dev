@@ -30,9 +30,16 @@ El orden importa. Lo que sigue es el proceso verificado el 2026-10-03.
 ### 1. Antes de tocar la imagen
 
 ```bash
-git pull                      # que no haya divergencia con el espejo
-./deploy.sh <ip-de-la-pi>     # el firmware de la Pi debe ser el que vas a congelar
+git pull                                  # que no haya divergencia con el espejo
+./deploy.sh <ip-de-la-pi>                 # el firmware debe ser el que vas a congelar
+./deploy.sh --solo-firmware <ip-de-la-pi> # si sólo ha cambiado código Python
 ```
+
+Desde v2026-10-03 las imágenes no traen el `NOPASSWD: ALL` de Raspberry Pi OS, así que instalar
+ficheros de sistema pide la contraseña del dispositivo; ese paso usa `ssh -t` para que `sudo` tenga
+terminal. Si sólo ha cambiado código Python —compruébalo con
+`git diff --name-only <tag-de-la-imagen>..HEAD -- firmware/deploy/sistema/`— usa `--solo-firmware` y
+te lo ahorras: reiniciar `historias.service` sí está en la lista corta de `/etc/sudoers.d`.
 
 Prueba en el dispositivo lo que hayas cambiado. Una imagen se publica desde una Pi cuyo
 comportamiento has visto funcionar, no desde una que asumes correcta.

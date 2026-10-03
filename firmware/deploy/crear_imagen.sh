@@ -71,8 +71,19 @@ if [ "$LOCAL" = false ]; then
     PI="storymaker@${IP}"
 
     # ── [1/4] Limpiar Pi ─────────────────────────────────────────────────
-    echo "[1/4] Limpiando Pi..."
-    ssh "$PI" 'bash -s' < "${SCRIPT_DIR}/limpiar_pi.sh"
+    echo "[1/4] Limpiando Pi (sudo pedirá la contraseña del dispositivo)..."
+    # Se copia y se ejecuta con `ssh -t ... sudo bash`, en lugar de canalizarlo
+    # por stdin como antes. Dos razones:
+    #   • Desde que la imagen no trae NOPASSWD: ALL, los sudo internos del
+    #     script necesitan terminal; sin ella fallan con «a terminal is
+    #     required to read the password».
+    #   • `ssh -t` ocupa stdin con el pseudoterminal, así que es incompatible
+    #     con alimentar el script por esa vía.
+    # Ejecutándolo ya como root, sus `sudo` internos son inocuos.
+    scp "${SCRIPT_DIR}/limpiar_pi.sh" "${PI}:/tmp/limpiar_pi.sh"
+    # Se preserva el código de salida: si la guarda del script aborta, esta
+    # captura debe abortar también y no generar una imagen a medio limpiar.
+    ssh -t "$PI" "sudo bash /tmp/limpiar_pi.sh; EST=\$?; rm -f /tmp/limpiar_pi.sh; exit \$EST"
     echo ""
 
     # ── [2/4] Esperar el apagado ─────────────────────────────────────────
