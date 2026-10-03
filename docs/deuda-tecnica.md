@@ -13,6 +13,18 @@
   `crear_imagen.sh --local` ejecuta el primero, el resultado depende del modo de
   captura. Decidido el 2026-10-03 dejarlo así, pero conviene unificarlo.
 - Eleven Labs como opción TTS premium (no implementado)
+- **Permitir contraseñas SSH de 6 caracteres.** Pedido tras probar el primer
+  arranque de v2026-10-03: el mínimo de 8 resulta incómodo de teclear en el
+  asistente. Hay que cambiarlo en dos sitios, porque el ayudante revalida por ser
+  la frontera de privilegio: `MIN_PASS_SSH` en `portal.py` y `MIN_LONGITUD` en
+  `deploy/sistema/storymaker-setpass`.
+  Contrapartida que conviene no perder de vista: bajar a 6 debilita justo lo que
+  se endureció en esa versión, y el ataque realista no es offline sino fuerza
+  bruta por SSH desde la propia red. Con 6 caracteres eso pasa a ser viable para
+  alguien con paciencia. Lo sensato es acompañarlo de limitación de intentos
+  —`MaxAuthTries` en `sshd_config` y/o `fail2ban`— y entonces 6 caracteres son
+  defendibles. Implementar sólo la rebaja, sin el freno, deja el dispositivo peor
+  de como estaba.
 - **Contraseña SSH en claro sobre el AP de configuración.** El asistente de
   primer arranque pide la contraseña por HTTP y, cuando no hay red conocida, eso
   ocurre sobre el AP abierto `StoryMaker-Setup`. Alternativa valorada y no
