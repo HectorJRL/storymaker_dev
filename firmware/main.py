@@ -202,13 +202,11 @@ def main():
 
         def _anunciar_setup(modo, ip):
             if modo == 'ap':
-                texto_audio     = "Conecta tu movil a la red StoryMaker-Setup para configurar el WiFi."
-                texto_impresora = "StoryMaker - Primera configuracion\nConecta al WiFi: StoryMaker-Setup\nPortal: http://10.42.0.1:8080"
+                texto_audio = "Conecta tu movil a la red StoryMaker-Setup para configurar el WiFi."
             elif modo == 'client' and ip:
-                texto_audio     = f"StoryMaker esta en linea. Accede al portal en la direccion {ip}, puerto cinco mil."
-                texto_impresora = f"StoryMaker\nPortal: http://{ip}:5000\nO en: http://storymaker.local:5000"
+                texto_audio = f"StoryMaker esta en linea. Accede al portal en la direccion {ip}, puerto cinco mil."
             else:
-                texto_audio = texto_impresora = None
+                texto_audio = None
 
             if pantalla_setup:
                 try:
@@ -222,9 +220,12 @@ def main():
                 except Exception as e:
                     print(f"[Main] Audio anuncio error: {e}")
 
-            if texto_impresora and impresora_setup:
+            if impresora_setup and modo in ('ap', 'client'):
                 try:
-                    impresora_setup.imprimir(texto_impresora)
+                    # Se reutiliza la bienvenida en lugar de componer texto plano:
+                    # así el primer arranque saca también el QR, igual que la
+                    # e-ink, y la URL de cada modo se decide en un solo sitio.
+                    impresora_setup.imprimir_bienvenida(modo=modo, ip=ip)
                 except Exception as e:
                     print(f"[Main] Impresora setup error: {e}")
 

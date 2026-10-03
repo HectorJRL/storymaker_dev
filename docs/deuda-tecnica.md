@@ -26,6 +26,15 @@
   siguientes vayan directas a espeak en lugar de reintentar cada vez.
   Relevante para talleres en sitios sin cobertura, que es un escenario de uso
   previsto.
+- **La bienvenida de la e-ink en modo AP no dice a qué red conectarse.** Muestra
+  un QR con `http://10.42.0.1:8080` y el texto «Escanea el QR para configurar el
+  WiFi», pero ese portal no es alcanzable hasta estar conectado a la red
+  `StoryMaker-Setup`, cuyo nombre no aparece en ninguna parte de la pantalla. El
+  2026-10-03 se corrigió el equivalente en la impresora térmica, que ahora numera
+  los pasos y pone el nombre de la red en negrita antes del QR; la e-ink sigue
+  pendiente porque toca su composición gráfica. Mejor aún para las dos salidas
+  sería un QR de tipo `WIFI:S:StoryMaker-Setup;T:nopass;;`, que los móviles usan
+  para unirse a la red directamente; tras eso el portal cautivo se abre solo.
 - **Contraseña SSH en claro sobre el AP de configuración.** El asistente de
   primer arranque pide la contraseña por HTTP y, cuando no hay red conocida, eso
   ocurre sobre el AP abierto `StoryMaker-Setup`. Alternativa valorada y no

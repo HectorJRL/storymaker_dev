@@ -140,17 +140,23 @@ class Impresora:
         except Exception as e:
             print(f"[Impresora] ERROR: {e}")
 
-    def imprimir_bienvenida(self):
+    def imprimir_bienvenida(self, modo=None, ip=None):
         """
         Imprime cabecera de bienvenida con QR del portal.
         Detecta el modo de red igual que la e-ink.
+
+        Si no se le pasan `modo` e `ip`, los detecta por su cuenta. El anuncio
+        del primer arranque los captura ANTES de anunciar, para que el modo no
+        pueda cambiar entre la detección y la impresión, y los pasa aquí; misma
+        firma que `PantallaEInk.mostrar_bienvenida`.
         """
         if not SERIAL_DISPONIBLE or not self.conexion or not self.conexion.is_open:
             return
         try:
-            from modules.netinfo import get_wifi_mode, get_ip
-            modo = get_wifi_mode()
-            ip   = get_ip()
+            if modo is None:
+                from modules.netinfo import get_wifi_mode, get_ip
+                modo = get_wifi_mode()
+                ip   = get_ip()
 
             self._feed(2)
             self._linea_centrada("La asombrosa maquina", bold=True)
@@ -167,11 +173,21 @@ class Impresora:
                 self._qr(url, size=5)
                 self._feed(1)
                 self._linea_centrada(url)
+                self._linea_centrada("o http://storymaker.local:5000")
             elif modo == 'ap':
                 url = "http://10.42.0.1:8080"
                 self._feed(1)
-                self._linea_centrada("Escanea el QR para")
-                self._linea_centrada("configurar el WiFi:")
+                # El nombre de la red va PRIMERO y en negrita: el QR apunta al
+                # portal cautivo, que no es alcanzable hasta estar conectado a
+                # esta WiFi. Sin este dato, el QR no sirve de nada.
+                self._linea_centrada("Primera configuracion")
+                self._feed(1)
+                self._linea_centrada("1. Conecta tu movil al WiFi:")
+                self._linea_centrada("StoryMaker-Setup", bold=True)
+                self._linea_centrada("(red abierta, sin clave)")
+                self._feed(1)
+                self._linea_centrada("2. Se abrira el portal solo.")
+                self._linea_centrada("Si no, escanea el QR:")
                 self._feed(1)
                 self._qr(url, size=5)
                 self._feed(1)
