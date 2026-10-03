@@ -1,5 +1,17 @@
 # Deuda técnica conocida
 
+- **Codeberg arrastra ~976 MB de un blob huérfano.** La imagen
+  `storymaker-2026-06-23.img.xz` se subió en su día dentro del repo; al reescribir
+  la historia para quitarla, el objeto quedó allí sin ninguna referencia que lo
+  apunte (`git ls-remote` sólo devuelve `main`). Los objetos inalcanzables no se
+  envían al clonar, así que no afecta a quien clone, pero ocupa disco en Codeberg
+  y cuenta para su cuota. Sólo lo puede eliminar el `git gc` del servidor, que no
+  es accesible por API: hay que pedirlo en `codeberg.org/Codeberg/Community`. El
+  espejo de GitHub se libró (0,4 MB).
+- **Divergencia entre los dos scripts de limpieza.** `limpiar_montada.sh` resetea
+  los interruptores de hardware a desactivado y `limpiar_pi.sh` no. Como
+  `crear_imagen.sh --local` ejecuta el primero, el resultado depende del modo de
+  captura. Decidido el 2026-10-03 dejarlo así, pero conviene unificarlo.
 - Eleven Labs como opción TTS premium (no implementado)
 - **Contraseña SSH en claro sobre el AP de configuración.** El asistente de
   primer arranque pide la contraseña por HTTP y, cuando no hay red conocida, eso
