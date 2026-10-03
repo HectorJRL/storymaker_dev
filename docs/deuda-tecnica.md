@@ -1,5 +1,23 @@
 # Deuda técnica conocida
 
+- **Renombrar el perfil `1eso` a `juvenil`, en la próxima release.** `1eso` sólo
+  significa algo dentro del sistema educativo español; `juvenil` cubre el mismo
+  tramo de edad sin atarse a una nomenclatura nacional, y quien necesite algo más
+  concreto se lo crea desde el portal, que justamente está diseñado para eso.
+  Decidido el 2026-10-03 y dejado fuera de v2026-10-03 a propósito.
+  Hay que cambiarlo en seis sitios:
+  - `git mv firmware/data/perfiles/1eso firmware/data/perfiles/juvenil`
+  - `firmware/data/config.json` → `perfil_activo`
+  - `firmware/data/config.template.json` → `perfil_activo`
+  - `firmware/deploy/limpiar_pi.sh` → `PERFIL_FABRICA`
+  - `firmware/deploy/limpiar_montada.sh` → `PERFIL_FABRICA`
+  - `firmware/README.md` → el árbol de `data/`
+
+  Los dispositivos ya en campo no se rompen: `deploy.sh` excluye `data/perfiles/`
+  y `data/config.json`, así que conservan su carpeta `1eso` y su configuración.
+  El cambio sólo afecta a lo que traiga una imagen nueva o una instalación hecha
+  con `setup_sd.sh`.
+
 - **Codeberg arrastra ~976 MB de un blob huérfano.** La imagen
   `storymaker-2026-06-23.img.xz` se subió en su día dentro del repo; al reescribir
   la historia para quitarla, el objeto quedó allí sin ninguna referencia que lo
