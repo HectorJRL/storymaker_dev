@@ -105,7 +105,12 @@ echo "      → Hecho"
 # ── [7] Contraseña de fábrica ────────────────────────────────────────
 echo "[7/8] Restableciendo la contraseña de fábrica..."
 # chpasswd --root opera sobre el /etc/shadow del rootfs montado.
-if echo 'storymaker:storymaker' | sudo chpasswd --root "$ROOTFS" 2>/dev/null; then
+#
+# --crypt-method SHA512 es deliberado: este script corre en el ordenador de
+# desarrollo, cuyo chpasswd puede generar por defecto un hash yescrypt según la
+# distribución. Al sobrescribir el /etc/shadow de la Pi hay que escribir un hash
+# que su libcrypt entienda con seguridad, y SHA512 ($6$) lo soportan todas.
+if echo 'storymaker:storymaker' | sudo chpasswd --crypt-method SHA512 --root "$ROOTFS" 2>/dev/null; then
     echo "      → contraseña de storymaker restablecida"
 else
     echo "      ✗ ABORTADO: chpasswd --root ha fallado sobre ${ROOTFS}"
