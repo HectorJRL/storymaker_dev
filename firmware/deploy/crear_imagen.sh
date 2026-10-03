@@ -4,8 +4,10 @@
 # =============================================================================
 #
 # FLUJO NORMAL (con IP de la Pi):
-#   1. Limpia la Pi vía SSH (limpiar_pi.sh)
-#   2. Apaga la Pi
+#   1. Limpia la Pi vía SSH (limpiar_pi.sh), que termina apagándola por su
+#      cuenta: su último paso borra el perfil WiFi activo, lo que corta la
+#      sesión SSH, así que va detachado con systemd-run
+#   2. Espera a que se apague (con un shutdown de reserva)
 #   3. El usuario inserta la SD en este ordenador
 #   4. Captura imagen con dd
 #   5. Reduce la imagen con pishrink.sh
@@ -73,11 +75,14 @@ if [ "$LOCAL" = false ]; then
     ssh "$PI" 'bash -s' < "${SCRIPT_DIR}/limpiar_pi.sh"
     echo ""
 
-    # ── [2/4] Apagar Pi ──────────────────────────────────────────────────
-    echo "[2/4] Apagando Pi..."
-    ssh "$PI" "sudo shutdown -h now" 2>/dev/null || true
-    echo "      Esperando 25 s a que la Pi se apague..."
-    sleep 25
+    # ── [2/4] Esperar el apagado ─────────────────────────────────────────
+    echo "[2/4] Esperando el apagado..."
+    # limpiar_pi.sh ya apaga la Pi en su paso [8]. Este shutdown es red de
+    # seguridad por si esa unidad no llegó a arrancar; fallará sin consecuencias
+    # cuando la Pi se esté apagando ya o se haya quedado sin red.
+    ssh -o ConnectTimeout=5 "$PI" "sudo shutdown -h now" 2>/dev/null || true
+    echo "      Esperando 30 s a que la Pi se apague..."
+    sleep 30
     echo "      → Hecho"
     echo ""
 else
