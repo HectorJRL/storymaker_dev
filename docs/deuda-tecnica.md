@@ -13,6 +13,19 @@
   `crear_imagen.sh --local` ejecuta el primero, el resultado depende del modo de
   captura. Decidido el 2026-10-03 dejarlo así, pero conviene unificarlo.
 - Eleven Labs como opción TTS premium (no implementado)
+- **Sin internet, cada frase pierde 15 s esperando a edge-tts.** `audio.py`
+  decide el motor con `self._edge_ok = os.path.isfile(EDGE_TTS_BIN)`, que sólo
+  mira si existe el binario: nunca comprueba la red, pese a que el mensaje de
+  arranque diga «Sin red o edge-tts no disponible». Resultado: en una zona sin
+  internet, `hablar()` intenta edge-tts en cada premisa y agota el
+  `asyncio.wait_for(..., timeout=15.0)` antes de caer a `espeak-ng`. Funciona,
+  pero con 15 s de silencio por frase el dispositivo parece averiado.
+  Dos arreglos que se complementan: usar `netinfo.get_wifi_mode()` —ya existe y
+  main.py lo usa para la bienvenida— para descartar edge-tts cuando no hay ruta;
+  y recordar el fallo unos minutos, de modo que tras el primer timeout las frases
+  siguientes vayan directas a espeak en lugar de reintentar cada vez.
+  Relevante para talleres en sitios sin cobertura, que es un escenario de uso
+  previsto.
 - **Permitir contraseñas SSH de 6 caracteres.** Pedido tras probar el primer
   arranque de v2026-10-03: el mínimo de 8 resulta incómodo de teclear en el
   asistente. Hay que cambiarlo en dos sitios, porque el ayudante revalida por ser
