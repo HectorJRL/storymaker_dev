@@ -36,13 +36,25 @@ echo "[1/8] Limpiando config.json..."
 CONFIG="/home/storymaker/proyecto/data/config.json"
 if [ -f "$CONFIG" ]; then
     python3 - "$CONFIG" <<'PYEOF'
-import json, sys
+import json, os, sys
 path = sys.argv[1]
 with open(path, encoding='utf-8') as f:
     cfg = json.load(f)
 cfg['setup_completado'] = False
 cfg.pop('flask_secret', None)
 cfg['pin'] = '1234'          # el asistente de primer arranque pedirá otro
+
+# Perfil activo de fábrica. Sin esto, la imagen hereda el perfil que estuviera
+# seleccionado en el dispositivo usado para capturarla: una dependencia
+# silenciosa de qué Pi se tenía a mano. Si el perfil de fábrica no existiera, se
+# deja el que haya en lugar de apuntar a una carpeta inexistente, que impediría
+# arrancar el Generador.
+PERFIL_FABRICA = '1eso'
+if os.path.isdir(os.path.join(os.path.dirname(path), 'perfiles', PERFIL_FABRICA)):
+    cfg['perfil_activo'] = PERFIL_FABRICA
+else:
+    print(f"      AVISO: no existe el perfil '{PERFIL_FABRICA}'; "
+          f"se deja '{cfg.get('perfil_activo')}' como activo")
 with open(path, 'w', encoding='utf-8') as f:
     json.dump(cfg, f, ensure_ascii=False, indent=4)
 print("      → config.json limpiado")
