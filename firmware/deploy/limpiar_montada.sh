@@ -96,10 +96,19 @@ done
 echo "      → Hecho"
 
 # ── [6] Bash history ─────────────────────────────────────────────────
-echo "[6/8] Limpiando bash history..."
+echo "[6/8] Limpiando bash history y /tmp..."
 for HIST in "${ROOTFS}/home/storymaker/.bash_history" "${ROOTFS}/root/.bash_history"; do
     [ -f "$HIST" ] && truncate -s 0 "$HIST" || true
 done
+
+# En Raspberry Pi OS /tmp está en disco: lo que quede ahí viaja dentro de la
+# imagen (por ejemplo los ficheros que deja un despliegue a medias). En frío no
+# hay nada en marcha, así que se vacía del todo. `find -delete` en lugar de
+# `rm -rf glob`: si ROOTFS viniera mal, la comprobación de arriba ya habría
+# abortado, y así tampoco depende de cómo expanda el shell el comodín.
+if [ -d "${ROOTFS}/tmp" ]; then
+    find "${ROOTFS}/tmp" -mindepth 1 -delete 2>/dev/null || true
+fi
 echo "      → Hecho"
 
 # ── [7] Contraseña de fábrica ────────────────────────────────────────

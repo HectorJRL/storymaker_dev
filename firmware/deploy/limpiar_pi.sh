@@ -82,11 +82,20 @@ done
 echo "      → Hecho"
 
 # ── [5] Bash history ─────────────────────────────────────────────────
-echo "[5/8] Limpiando bash history..."
+echo "[5/8] Limpiando bash history y restos de despliegue en /tmp..."
 for HIST in /home/storymaker/.bash_history /root/.bash_history; do
     sudo truncate -s 0 "$HIST" 2>/dev/null || true
 done
 history -c 2>/dev/null || true
+
+# En Raspberry Pi OS /tmp está en disco, así que lo que quede ahí viaja dentro de
+# la imagen. Se borran sólo los restos conocidos de un despliegue: el portal y el
+# TTS usan /tmp mientras el servicio está en marcha, y vaciarlo entero en caliente
+# sería buscarse un problema. La limpieza en frío sí lo vacía del todo.
+sudo rm -f /tmp/storymaker_deploy.tar.gz \
+           /tmp/storymaker-captive.py \
+           /tmp/storymaker-setpass \
+           /tmp/storymaker-shutdown 2>/dev/null || true
 echo "      → Hecho"
 
 # ── [6] Contraseña de fábrica ────────────────────────────────────────
