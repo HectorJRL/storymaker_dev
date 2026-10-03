@@ -26,6 +26,13 @@ BASE_DIR     = os.path.join(os.path.dirname(__file__), '..')
 PERFILES_DIR = os.path.join(BASE_DIR, 'data', 'perfiles')
 PIN_DEFAULT  = "1234"
 
+# Contraseña UNIX con la que sale la imagen distribuible. El asistente de primer
+# arranque obliga a cambiarla: así cada dispositivo tiene la suya y no comparten
+# todos la credencial que viaja dentro de la imagen publicada.
+PASS_FABRICA  = "storymaker"
+MIN_PASS_SSH  = 8
+SETPASS_BIN   = "/usr/local/bin/storymaker-setpass"
+
 app = Flask(__name__)
 # Secret temporal hasta que Portal.__init__ cargue el valor persistente de config.json
 app.secret_key = secrets.token_hex(32)
@@ -86,6 +93,49 @@ def guardar_premisas(perfil, tipo, premisas):
             pass
         raise
 
+def _comprobar_pass(nueva, repite, obligatoria):
+    """Valida la contraseña SSH escrita en el asistente.
+    Devuelve None si es aceptable, o el mensaje a mostrar al usuario."""
+    if not nueva and not repite:
+        if obligatoria:
+            return ("Define una contraseña para el acceso SSH de este dispositivo. "
+                    "Es lo que evita que todos los StoryMaker compartan la misma "
+                    "contraseña de fábrica.")
+        return None
+    if nueva != repite:
+        return "Las dos contraseñas no coinciden. Vuelve a escribirlas."
+    if len(nueva) < MIN_PASS_SSH:
+        return f"La contraseña debe tener al menos {MIN_PASS_SSH} caracteres."
+    if any(c.isspace() for c in nueva):
+        return "La contraseña no puede contener espacios ni tabuladores."
+    if nueva == PASS_FABRICA:
+        return "Esa es justo la contraseña de fábrica. Elige otra distinta."
+    return None
+
+
+def _fijar_pass_ssh(nueva):
+    """Cambia la contraseña UNIX de `storymaker` con el ayudante privilegiado.
+
+    La contraseña va por stdin: como argumento sería visible en `ps` para
+    cualquier usuario de la máquina. No se registra en ningún sitio.
+    Devuelve (ok, mensaje_de_error)."""
+    import subprocess
+    try:
+        r = subprocess.run(['sudo', '-n', SETPASS_BIN],
+                           input=nueva + '\n', text=True,
+                           capture_output=True, timeout=20)
+    except FileNotFoundError:
+        return False, ("No se encuentra el ayudante del sistema que cambia la "
+                       "contraseña. Revisa la instalación del dispositivo.")
+    except Exception as e:
+        return False, f"No se ha podido cambiar la contraseña del sistema: {e}"
+    if r.returncode != 0:
+        lineas = (r.stderr or '').strip().splitlines()
+        pista  = lineas[-1] if lineas else f"código {r.returncode}"
+        return False, f"El sistema ha rechazado la contraseña: {pista}"
+    return True, ''
+
+
 def login_requerido(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -134,7 +184,19 @@ def logout():
 @login_requerido
 def setup():
     config = cargar_config()
+    primer_arranque = not config.get('setup_completado', False)
     if request.method == 'POST':
+        # La contraseña se valida y se aplica ANTES de tocar config.json: si algo
+        # falla, el usuario vuelve al formulario y no queda nada a medias.
+        nueva_pass  = request.form.get('nueva_pass', '')
+        repite_pass = request.form.get('repite_pass', '')
+        fallo = _comprobar_pass(nueva_pass, repite_pass, primer_arranque)
+        if fallo:
+            return _render_setup(config.get('hardware', {}), config, fallo)
+        if nueva_pass:
+            ok, fallo = _fijar_pass_ssh(nueva_pass)
+            if not ok:
+                return _render_setup(config.get('hardware', {}), config, fallo)
         hw = config.setdefault('hardware', {})
         eink_desactivada = 'eink' not in request.form
         hw.setdefault('eink', {})['activada'] = 'eink' in request.form
@@ -619,7 +681,8 @@ def _render_login(error=None, primer_arranque=False):
 <div class="primer-arranque-box">
   <p class="primer-arranque-titulo">Primera configuración</p>
   <p>PIN inicial: <strong>1234</strong></p>
-  <p class="primer-arranque-sub">Podrás cambiarlo en el siguiente paso.</p>
+  <p class="primer-arranque-sub">En el siguiente paso cambiarás el PIN y pondrás
+  una contraseña propia para el acceso SSH de este dispositivo.</p>
 </div>''' if primer_arranque else ''
 
     css = """
@@ -738,7 +801,26 @@ function togglePin() {{
 # ------------------------------------------------------------------ #
 # Setup                                                               #
 # ------------------------------------------------------------------ #
-def _render_setup(hw, config):
+def _render_setup(hw, config, error=None):
+    # El primer arranque exige contraseña propia; después es opcional y dejarla
+    # vacía significa «no la cambies».
+    obliga_pass = not config.get('setup_completado', False)
+    marca_obligatoria = (' <span style="color:var(--accent);font-weight:600">· obligatoria</span>'
+                         if obliga_pass else '')
+    requerido        = ' required minlength="8"' if obliga_pass else ' minlength="8"'
+    placeholder_pass = ('Mínimo 8 caracteres' if obliga_pass
+                        else 'Dejar vacío para no cambiar')
+    nota_pass = (
+        f"Mínimo {MIN_PASS_SSH} caracteres, sin espacios. Es la contraseña del "
+        f"usuario <strong>storymaker</strong> para entrar por SSH. Ponle una tuya: "
+        f"la que trae la imagen es la misma en todos los dispositivos, así que "
+        f"mientras no la cambies, cualquiera que la conozca puede entrar en el tuyo."
+        if obliga_pass else
+        f"Mínimo {MIN_PASS_SSH} caracteres, sin espacios. Dejar vacío para no cambiarla.")
+    error_html = (
+        '<div style="background:var(--err-bg);border:1px solid #e0bcbc;'
+        'color:var(--err);padding:.85rem 1rem;font-size:.88rem;line-height:1.5;'
+        f'margin-bottom:1.25rem">{html.escape(error)}</div>' if error else '')
     eink_chk  = 'checked' if hw.get('eink',      {}).get('activada', False) else ''
     imp_chk   = 'checked' if hw.get('impresora', {}).get('activada', False) else ''
     aud_chk   = 'checked' if hw.get('audio',     {}).get('activada', False) else ''
@@ -822,6 +904,8 @@ body { display: flex; align-items: flex-start; justify-content: center; padding:
     <p class="setup-sub">{"Ajusta qué hardware está conectado al HAT de este dispositivo." if setup_ok else "Primera vez que arrancas StoryMaker. Indica qué módulos están conectados al HAT."}</p>
   </div>
 
+  {error_html}
+
   <form method="POST">
     <div class="section">
       <p class="section-title">Pantalla</p>
@@ -868,11 +952,21 @@ body { display: flex; align-items: flex-start; justify-content: center; padding:
 
     <div class="section">
       <p class="section-title">Seguridad</p>
-      <label class="sub-label" for="nuevo_pin">Cambiar PIN de acceso</label>
+      <label class="sub-label" for="nuevo_pin">PIN de acceso al portal</label>
       <input class="sub-input" type="password" id="nuevo_pin" name="nuevo_pin"
              maxlength="8" placeholder="Dejar vacío para no cambiar"
              inputmode="numeric" style="max-width:200px">
       <p class="nota">4–8 dígitos. Dejar vacío para no cambiar.</p>
+
+      <label class="sub-label" for="nueva_pass" style="margin-top:1.15rem">
+        Contraseña de acceso SSH{marca_obligatoria}</label>
+      <input class="sub-input" type="password" id="nueva_pass" name="nueva_pass"
+             autocomplete="new-password" style="max-width:260px"
+             placeholder="{placeholder_pass}"{requerido}>
+      <input class="sub-input" type="password" id="repite_pass" name="repite_pass"
+             autocomplete="new-password" style="max-width:260px;margin-top:.45rem"
+             placeholder="Repite la contraseña"{requerido}>
+      <p class="nota">{nota_pass}</p>
     </div>
 
     <button class="submit-btn" type="submit">{btn_label}</button>

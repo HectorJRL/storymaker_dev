@@ -1,2 +1,7 @@
+# Permisos sin contraseña para el usuario `storymaker`.
+# Son los únicos que el firmware necesita. El `NOPASSWD: ALL` que Raspberry Pi OS
+# instala en /etc/sudoers.d/010_pi-nopasswd se elimina en setup_sd.sh y en la
+# limpieza previa a la imagen, para que entrar por SSH no equivalga a ser root.
 storymaker ALL=(ALL) NOPASSWD: /usr/sbin/shutdown
 storymaker ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart historias.service
+storymaker ALL=(ALL) NOPASSWD: /usr/local/bin/storymaker-setpass

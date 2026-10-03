@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# =============================================================================
+# storymaker-setpass — Fija la contraseña UNIX del usuario `storymaker`
+# =============================================================================
+# Lo invoca el portal web (que corre como `storymaker`) a través de sudo, con
+# la línea NOPASSWD declarada en /etc/sudoers.d/storymaker-shutdown.
+#
+# Existe para que cada dispositivo tenga su propia contraseña de SSH, elegida
+# por su dueño en el asistente de primer arranque, en lugar de compartir todas
+# las unidades la contraseña que venga dentro de la imagen distribuible.
+#
+# DECISIONES:
+#   • La contraseña llega por STDIN, nunca como argumento: un argumento sería
+#     visible en `ps` para cualquier usuario de la máquina.
+#   • El usuario va fijado aquí dentro a propósito. Dar `sudo chpasswd` a secas
+#     permitiría cambiar la contraseña de cualquier cuenta, root incluida.
+#   • Valida también aquí, no sólo en el portal: este script es la frontera de
+#     privilegio y no debe fiarse de quien lo llama.
+#   • No imprime nunca la contraseña, ni en errores.
+#
+# SALIDA: 0 correcto · 2 vacía · 3 corta · 4 con espacios · 5 fallo de chpasswd
+# =============================================================================
+set -euo pipefail
+
+USUARIO="storymaker"
+MIN_LONGITUD=8
+
+IFS= read -r PASS || true
+PASS="${PASS:-}"
+
+if [ -z "$PASS" ]; then
+    echo "storymaker-setpass: contraseña vacía" >&2
+    exit 2
+fi
+
+if [ "${#PASS}" -lt "$MIN_LONGITUD" ]; then
+    echo "storymaker-setpass: demasiado corta (mínimo ${MIN_LONGITUD} caracteres)" >&2
+    exit 3
+fi
+
+case "$PASS" in
+    *[[:space:]]*)
+        echo "storymaker-setpass: no se admiten espacios ni tabuladores" >&2
+        exit 4
+        ;;
+esac
+
+# chpasswd parte en el PRIMER ':', así que una contraseña con dos puntos es válida.
+if ! printf '%s:%s\n' "$USUARIO" "$PASS" | chpasswd; then
+    echo "storymaker-setpass: chpasswd ha fallado" >&2
+    exit 5
+fi
+
+echo "storymaker-setpass: contraseña de ${USUARIO} actualizada"

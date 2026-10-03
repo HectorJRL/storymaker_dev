@@ -266,6 +266,7 @@ scp $SSH_OPTS "$SISTEMA_DIR/storymaker-captive.service" "${PI}:/tmp/"
 scp $SSH_OPTS "$SISTEMA_DIR/storymaker-wifi.sh"         "${PI}:/tmp/"
 scp $SSH_OPTS "$SISTEMA_DIR/storymaker-captive.py"      "${PI}:/tmp/"
 scp $SSH_OPTS "$SISTEMA_DIR/storymaker-shutdown"        "${PI}:/tmp/"
+scp $SSH_OPTS "$SISTEMA_DIR/storymaker-setpass"         "${PI}:/tmp/"
 
 ssh $SSH_OPTS "$PI" bash <<'REMOTE'
 set -euo pipefail
@@ -278,6 +279,7 @@ sudo mv /tmp/storymaker-captive.py      /usr/local/bin/
 sudo chmod +x /usr/local/bin/storymaker-wifi.sh
 sudo chmod +x /usr/local/bin/storymaker-captive.py
 sudo install -m 440 -o root -g root /tmp/storymaker-shutdown /etc/sudoers.d/storymaker-shutdown
+sudo install -m 755 -o root -g root /tmp/storymaker-setpass  /usr/local/bin/storymaker-setpass
 
 sudo systemctl daemon-reload
 sudo systemctl enable avahi-daemon
@@ -369,6 +371,7 @@ check "edge-tts"              "test -f /home/storymaker/proyecto/venv/bin/edge-t
 check "storymaker-wifi.sh"    "test -f /usr/local/bin/storymaker-wifi.sh"
 check "storymaker-captive.py" "test -f /usr/local/bin/storymaker-captive.py"
 check "sudoers"               "test -f /etc/sudoers.d/storymaker-shutdown"
+check "storymaker-setpass"    "test -x /usr/local/bin/storymaker-setpass"
 check "asound.conf"           "test -f /etc/asound.conf"
 
 echo ""
@@ -379,7 +382,10 @@ REMOTE
 echo ""
 echo "Reiniciando la Pi..."
 echo "(necesario para activar SPI, UART e I2S desde config.txt)"
-ssh $SSH_OPTS "$PI" "sudo reboot" || true
+# Se quita el NOPASSWD: ALL que Raspberry Pi OS deja en 010_pi-nopasswd, para que
+# entrar por SSH no equivalga a ser root. Va en el MISMO sudo que el reinicio: es
+# el último privilegio amplio que se usa, y `reboot` no está en la lista corta.
+ssh $SSH_OPTS "$PI" "sudo sh -c 'rm -f /etc/sudoers.d/010_pi-nopasswd; reboot'" || true
 
 echo ""
 echo "╔══════════════════════════════════════════════════════╗"

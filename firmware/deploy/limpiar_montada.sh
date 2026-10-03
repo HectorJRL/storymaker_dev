@@ -24,7 +24,7 @@ echo "╚═══════════════════════�
 echo ""
 
 # ── [1] Perfiles WiFi de cliente ─────────────────────────────────────
-echo "[1/6] Borrando perfiles WiFi de cliente..."
+echo "[1/8] Borrando perfiles WiFi de cliente..."
 NM_DIR="${ROOTFS}/etc/NetworkManager/system-connections"
 if [ -d "$NM_DIR" ]; then
     for CONN in "${NM_DIR}"/*.nmconnection; do
@@ -38,7 +38,7 @@ fi
 echo "      → Hecho"
 
 # ── [2] Limpiar config.json ──────────────────────────────────────────
-echo "[2/6] Limpiando config.json..."
+echo "[2/8] Limpiando config.json..."
 CONFIG="${ROOTFS}/home/storymaker/proyecto/data/config.json"
 if [ -f "$CONFIG" ]; then
     python3 - "$CONFIG" <<'PYEOF'
@@ -48,6 +48,7 @@ with open(path, encoding='utf-8') as f:
     cfg = json.load(f)
 cfg['setup_completado'] = False
 cfg.pop('flask_secret', None)
+cfg['pin'] = '1234'          # el asistente de primer arranque pedirá otro
 # Reset hardware a fábrica: todo desactivado, volumen neutro
 hw = cfg.setdefault('hardware', {})
 hw.setdefault('eink', {})['activada'] = False
@@ -68,13 +69,13 @@ fi
 find "${ROOTFS}/home/storymaker/proyecto/data/perfiles" -name '*.txt.bak' -delete 2>/dev/null || true
 
 # ── [3] Claves SSH autorizadas del usuario ───────────────────────────
-echo "[3/6] Borrando authorized_keys de storymaker..."
+echo "[3/8] Borrando authorized_keys de storymaker..."
 AUTH_KEYS="${ROOTFS}/home/storymaker/.ssh/authorized_keys"
 [ -f "$AUTH_KEYS" ] && truncate -s 0 "$AUTH_KEYS" || true
 echo "      → Hecho"
 
 # ── [4] Claves SSH host del sistema ─────────────────────────────────
-echo "[4/6] Eliminando claves SSH host..."
+echo "[4/8] Eliminando claves SSH host..."
 rm -f "${ROOTFS}"/etc/ssh/ssh_host_*
 # Habilitar el servicio de regeneración creando el symlink de systemd
 WANTS_DIR="${ROOTFS}/etc/systemd/system/multi-user.target.wants"
@@ -84,7 +85,7 @@ ln -sf /lib/systemd/system/regenerate_ssh_host_keys.service \
 echo "      → Hecho"
 
 # ── [5] Logs del sistema ──────────────────────────────────────────────
-echo "[5/6] Limpiando logs..."
+echo "[5/8] Limpiando logs..."
 # Journal binario
 find "${ROOTFS}/var/log/journal" -type f -name "*.journal" -delete 2>/dev/null || true
 # Logs de texto
@@ -95,11 +96,38 @@ done
 echo "      → Hecho"
 
 # ── [6] Bash history ─────────────────────────────────────────────────
-echo "[6/6] Limpiando bash history..."
+echo "[6/8] Limpiando bash history..."
 for HIST in "${ROOTFS}/home/storymaker/.bash_history" "${ROOTFS}/root/.bash_history"; do
     [ -f "$HIST" ] && truncate -s 0 "$HIST" || true
 done
 echo "      → Hecho"
+
+# ── [7] Contraseña de fábrica ────────────────────────────────────────
+echo "[7/8] Restableciendo la contraseña de fábrica..."
+# chpasswd --root opera sobre el /etc/shadow del rootfs montado.
+if echo 'storymaker:storymaker' | sudo chpasswd --root "$ROOTFS" 2>/dev/null; then
+    echo "      → contraseña de storymaker restablecida"
+else
+    echo "      ✗ ABORTADO: chpasswd --root ha fallado sobre ${ROOTFS}"
+    echo "        Sin esto la imagen saldría con la contraseña del equipo de desarrollo."
+    exit 1
+fi
+
+# ── [8] Recortar sudo sin contraseña ─────────────────────────────────
+echo "[8/8] Restringiendo sudo sin contraseña..."
+# Misma guarda que en limpiar_pi.sh: sin el ayudante, el asistente de primer
+# arranque no podría fijar la contraseña obligatoria y el dispositivo quedaría
+# inservible. Antes que publicar una imagen así, abortamos.
+if [ ! -x "${ROOTFS}/usr/local/bin/storymaker-setpass" ]; then
+    echo "      ✗ ABORTADO: falta ${ROOTFS}/usr/local/bin/storymaker-setpass"
+    exit 1
+fi
+if ! sudo grep -q storymaker-setpass "${ROOTFS}/etc/sudoers.d/storymaker-shutdown" 2>/dev/null; then
+    echo "      ✗ ABORTADO: el sudoers del rootfs no permite el ayudante"
+    exit 1
+fi
+sudo rm -f "${ROOTFS}/etc/sudoers.d/010_pi-nopasswd"
+echo "      → entrar por SSH ya no equivale a ser root"
 
 echo ""
 echo "╔══════════════════════════════════════════════════════╗"

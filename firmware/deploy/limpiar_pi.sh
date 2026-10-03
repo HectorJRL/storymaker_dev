@@ -24,7 +24,7 @@ echo "╚═══════════════════════�
 echo ""
 
 # ── [1] Perfiles WiFi de cliente ─────────────────────────────────────
-echo "[1/6] Borrando perfiles WiFi de cliente..."
+echo "[1/8] Borrando perfiles WiFi de cliente..."
 
 # Obtener conexiones WiFi en modo infrastructure (no AP)
 while IFS= read -r CONN; do
@@ -41,7 +41,7 @@ done < <(nmcli -t -f NAME,TYPE connection show \
 echo "      → Hecho"
 
 # ── [2] Limpiar config.json ──────────────────────────────────────────
-echo "[2/6] Limpiando config.json..."
+echo "[2/8] Limpiando config.json..."
 
 CONFIG="/home/storymaker/proyecto/data/config.json"
 if [ -f "$CONFIG" ]; then
@@ -52,6 +52,7 @@ with open(path, encoding='utf-8') as f:
     cfg = json.load(f)
 cfg['setup_completado'] = False
 cfg.pop('flask_secret', None)
+cfg['pin'] = '1234'          # el asistente de primer arranque pedirá otro
 with open(path, 'w', encoding='utf-8') as f:
     json.dump(cfg, f, ensure_ascii=False, indent=4)
 print("      → config.json limpiado")
@@ -65,13 +66,13 @@ fi
 sudo find "/home/storymaker/proyecto/data/perfiles" -name '*.txt.bak' -delete 2>/dev/null || true
 
 # ── [3] Claves SSH autorizadas del usuario ───────────────────────────
-echo "[3/6] Borrando authorized_keys de storymaker..."
+echo "[3/8] Borrando authorized_keys de storymaker..."
 > /home/storymaker/.ssh/authorized_keys 2>/dev/null \
     || sudo bash -c '> /home/storymaker/.ssh/authorized_keys'
 echo "      → Hecho"
 
 # ── [4] Claves SSH host del sistema ─────────────────────────────────
-echo "[4/6] Eliminando claves SSH host (se regeneran en el próximo arranque)..."
+echo "[4/8] Eliminando claves SSH host (se regeneran en el próximo arranque)..."
 
 # Asegurar que el servicio de regeneración está habilitado
 if systemctl list-unit-files regenerate_ssh_host_keys.service &>/dev/null; then
@@ -82,7 +83,7 @@ sudo rm -f /etc/ssh/ssh_host_*
 echo "      → Hecho"
 
 # ── [5] Logs del sistema ──────────────────────────────────────────────
-echo "[5/6] Limpiando logs..."
+echo "[5/8] Limpiando logs..."
 sudo journalctl --vacuum-size=1K 2>/dev/null || true
 for LOG in /var/log/auth.log /var/log/syslog /var/log/daemon.log \
            /var/log/kern.log /var/log/user.log; do
@@ -91,12 +92,43 @@ done
 echo "      → Hecho"
 
 # ── [6] Bash history ─────────────────────────────────────────────────
-echo "[6/6] Limpiando bash history..."
+echo "[6/8] Limpiando bash history..."
 for HIST in /home/storymaker/.bash_history /root/.bash_history; do
     sudo truncate -s 0 "$HIST" 2>/dev/null || true
 done
 history -c 2>/dev/null || true
 echo "      → Hecho"
+
+# ── [7] Contraseña de fábrica ────────────────────────────────────────
+echo "[7/8] Restableciendo la contraseña de fábrica..."
+# La imagen sale con una contraseña conocida y documentada, y el asistente de
+# primer arranque obliga a cambiarla: así cada dispositivo acaba con la suya y
+# no comparten todos la credencial que viaja dentro de la imagen publicada.
+echo 'storymaker:storymaker' | sudo chpasswd
+echo "      → contraseña de storymaker restablecida"
+
+# ── [8] Recortar sudo sin contraseña ─────────────────────────────────
+echo "[8/8] Restringiendo sudo sin contraseña..."
+# Último paso que necesita privilegios amplios. Después sólo quedan sin
+# contraseña las tres órdenes de /etc/sudoers.d/storymaker-shutdown; el
+# `sudo shutdown -h now` que lanza crear_imagen.sh sigue cubierto.
+#
+# GUARDA IMPRESCINDIBLE: sin el ayudante y su línea de sudoers, el asistente de
+# primer arranque no podría fijar la contraseña. Como es obligatoria, el usuario
+# no podría completar la configuración y el dispositivo quedaría inservible.
+# Antes que publicar una imagen así, abortamos.
+if [ ! -x /usr/local/bin/storymaker-setpass ]; then
+    echo "      ✗ ABORTADO: falta /usr/local/bin/storymaker-setpass"
+    echo "        Despliega con deploy.sh y repite la limpieza."
+    exit 1
+fi
+if ! sudo grep -q storymaker-setpass /etc/sudoers.d/storymaker-shutdown; then
+    echo "      ✗ ABORTADO: /etc/sudoers.d/storymaker-shutdown no permite el ayudante"
+    echo "        Despliega con deploy.sh y repite la limpieza."
+    exit 1
+fi
+sudo rm -f /etc/sudoers.d/010_pi-nopasswd
+echo "      → entrar por SSH ya no equivale a ser root"
 
 echo ""
 echo "╔══════════════════════════════════════════════════════╗"

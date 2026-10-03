@@ -11,7 +11,37 @@ Todo lo que `setup_sd.sh` instala automáticamente. Esta doc es referencia, no p
 | `deploy/sistema/storymaker-captive.service` | `/etc/systemd/system/` | Portal cautivo (puerto 8080) |
 | `deploy/sistema/storymaker-wifi.sh` | `/usr/local/bin/` | Script gestión WiFi (cliente/AP) |
 | `deploy/sistema/storymaker-captive.py` | `/usr/local/bin/` | Portal cautivo Flask |
-| `deploy/sistema/storymaker-shutdown` | `/etc/sudoers.d/` | NOPASSWD: shutdown + restart servicio |
+| `deploy/sistema/storymaker-shutdown` | `/etc/sudoers.d/` | NOPASSWD: shutdown, restart servicio y setpass |
+| `deploy/sistema/storymaker-setpass` | `/usr/local/bin/` | Fija la contraseña SSH del dispositivo (lo llama el portal) |
+
+## Acceso y credenciales
+
+| Credencial | De fábrica | Quién la cambia |
+|---|---|---|
+| PIN del portal web | `1234` | El usuario, en el asistente de primer arranque (opcional) |
+| Contraseña SSH de `storymaker` | `storymaker` | El usuario, en el asistente de primer arranque (**obligatoria**) |
+
+La imagen distribuible sale con esas dos credenciales conocidas y documentadas.
+El asistente `/setup` **no deja completar la configuración** sin definir una
+contraseña SSH propia, de forma que cada dispositivo acabe con la suya en lugar
+de compartir todas las unidades la que viaja dentro de la imagen publicada.
+
+El cambio lo aplica `/usr/local/bin/storymaker-setpass`, invocado por el portal
+vía `sudo` con una línea NOPASSWD. La contraseña le llega por *stdin*, nunca
+como argumento (sería visible en `ps`), y el usuario va fijado dentro del script
+porque permitir `sudo chpasswd` a secas dejaría cambiar la de cualquier cuenta,
+root incluida.
+
+`setup_sd.sh` y los dos scripts de limpieza **eliminan
+`/etc/sudoers.d/010_pi-nopasswd`**, el `NOPASSWD: ALL` que Raspberry Pi OS
+instala de serie. Sin ese recorte, entrar por SSH equivale a ser root y la
+contraseña propia serviría de poco. Quedan permitidas sin contraseña sólo las
+tres órdenes de `storymaker-shutdown`; `sudo` sigue funcionando para lo demás
+pidiendo la contraseña.
+
+> Limitación conocida: el asistente corre sobre HTTP y, en el primer arranque
+> sin red conocida, sobre el AP abierto `StoryMaker-Setup`. En ese escenario la
+> contraseña viaja en claro por una WiFi sin cifrar. Ver `deuda-tecnica.md`.
 
 ## Red / WiFi
 

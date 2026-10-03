@@ -8,6 +8,21 @@
 - Animación e-ink: `pluma.png` pre-renderizada al arrancar; se muestra mientras genera
 - Portal web: slider volumen con debounce 400ms; restart servicio via `subprocess.Popen` con `start_new_session=True`
 - `journald`: Storage=auto (volátil) — no saturar SD en producción
+- Contraseña SSH por dispositivo: el asistente de primer arranque la exige y la
+  aplica con el ayudante privilegiado `storymaker-setpass`
+  - El problema que resuelve: la imagen distribuible es pública, así que la
+    contraseña que lleve dentro es una credencial compartida por todas las
+    unidades. Y con `NOPASSWD: ALL`, entrar por SSH era ser root directo: con
+    eso se leen los `psk=` en claro de `/etc/NetworkManager/system-connections/`,
+    o sea la clave WiFi de la red donde esté el aparato
+  - Se eligió pedirla en `/setup` en vez de generarla y mostrarla en la e-ink,
+    para que sea memorizable; el coste es que sobre el AP abierto viaja en claro
+  - La contraseña va por *stdin* al ayudante, nunca como argumento (`ps`), el
+    usuario está fijado dentro del script (no vale `sudo chpasswd` a secas) y la
+    validación se repite en el script por ser la frontera de privilegio
+  - `limpiar_*.sh` abortan si falta el ayudante o su línea de sudoers: una imagen
+    sin ellos y sin `010_pi-nopasswd` dejaría el dispositivo inservible, porque
+    el asistente no podría cumplir un requisito que es obligatorio
 - Importación de premisas (`importador.py`): flujo de tres pantallas
   (formulario → revisión → confirmación) porque el usuario final no es técnico;
   nada se escribe hasta confirmar

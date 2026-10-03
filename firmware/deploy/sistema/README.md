@@ -13,7 +13,8 @@ Hay que aplicarlos manualmente en cada despliegue limpio.
 | `storymaker-captive.service` | `/etc/systemd/system/` | Portal cautivo Flask en puerto 8080 |
 | `storymaker-wifi.sh` | `/usr/local/bin/` | Script de gestión WiFi |
 | `storymaker-captive.py` | `/usr/local/bin/` | Portal cautivo para configurar WiFi desde el AP |
-| `storymaker-shutdown` | `/etc/sudoers.d/` | Permisos NOPASSWD para shutdown y restart del servicio |
+| `storymaker-shutdown` | `/etc/sudoers.d/` | Permisos NOPASSWD: shutdown, restart del servicio y setpass |
+| `storymaker-setpass` | `/usr/local/bin/` | Fija la contraseña SSH del dispositivo; lo invoca el portal por sudo |
 
 ## Orden de aplicación en una SD nueva
 
